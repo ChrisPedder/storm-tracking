@@ -1,0 +1,5 @@
+boto3>=1.28.0
+cdsapi>=0.7.0
+xarray>=2023.1.0
+cfgrib>=0.9.10
+eccodes>=1.6.0
