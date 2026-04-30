@@ -1,10 +1,14 @@
-name: CI
+name: CI/CD
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   cdk-tests:
@@ -51,3 +55,31 @@ jobs:
 
       - name: Lint
         run: uv run ruff check src/ tests/ tasks/
+
+  deploy:
+    name: Deploy to AWS
+    needs: [cdk-tests, python-tests]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infrastructure
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::978861143017:role/github-actions-deploy
+          aws-region: eu-central-1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: infrastructure/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: CDK deploy
+        run: npx cdk deploy StormTrackingPipeline --require-approval never

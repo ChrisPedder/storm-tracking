@@ -81,7 +81,7 @@ export class StormTrackingPipelineStack extends cdk.Stack {
 
     this.taskSg = new ec2.SecurityGroup(this, 'TaskSg', {
       vpc: this.vpc,
-      description: 'Fargate pipeline tasks — outbound only',
+      description: 'Fargate pipeline tasks - outbound only',
       allowAllOutbound: true,
     });
   }
@@ -151,6 +151,7 @@ export class StormTrackingPipelineStack extends cdk.Stack {
     },
   ): TaskPair {
     const taskDef = new ecs.FargateTaskDefinition(this, `${name}TaskDef`, {
+      family: `storm-tracking-${directory.replace(/_/g, '-')}`,
       cpu,
       memoryLimitMiB: memoryMib,
       taskRole: this.taskRole,
@@ -311,5 +312,11 @@ export class StormTrackingPipelineStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'BucketName', { value: this.bucket.bucketName });
     new cdk.CfnOutput(this, 'StateMachineArn', { value: this.stateMachine.stateMachineArn });
     new cdk.CfnOutput(this, 'ClusterArn', { value: this.cluster.clusterArn });
+    new cdk.CfnOutput(this, 'PublicSubnetIds', {
+      value: cdk.Fn.join(',', this.vpc.publicSubnets.map(s => s.subnetId)),
+    });
+    new cdk.CfnOutput(this, 'TaskSecurityGroupId', {
+      value: this.taskSg.securityGroupId,
+    });
   }
 }
