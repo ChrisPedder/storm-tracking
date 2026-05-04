@@ -155,6 +155,42 @@ def generate_manifest(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame
     }
 
 
+def validate_dataset(manifest: dict) -> None:
+    """Fail the pipeline if the dataset doesn't meet minimum quality thresholds."""
+    issues = []
+
+    total = sum(manifest["n_samples"].values())
+    if total < 100:
+        issues.append(f"Too few samples: {total} (minimum 100)")
+
+    if manifest["n_features"] < 10:
+        issues.append(f"Too few features: {manifest['n_features']} (minimum 10)")
+
+    label_dist = manifest["label_distribution"]
+    positives = label_dist.get("1", 0)
+    negatives = label_dist.get("0", 0)
+    if positives == 0:
+        issues.append("No positive samples in dataset")
+    if negatives == 0:
+        issues.append("No negative samples in dataset")
+    if positives > 0 and negatives > 0:
+        ratio = negatives / positives
+        if ratio < 1.0 or ratio > 10.0:
+            issues.append(f"Class ratio out of range: {ratio:.1f} (expected 1-10)")
+
+    for col, stats in manifest.get("feature_stats", {}).items():
+        if stats.get("missing_frac", 0) > 0.8:
+            issues.append(f"Feature '{col}' has {stats['missing_frac']:.0%} missing")
+
+    if issues:
+        for issue in issues:
+            logger.error("VALIDATION FAILED: %s", issue)
+        sys.exit(1)
+
+    logger.info("Validation passed: %d samples, %d features, ratio=%.1f",
+                total, manifest["n_features"], negatives / max(positives, 1))
+
+
 def main() -> None:
     logger.info("Dataset builder starting")
     logger.info("  S3 bucket: %s", S3_BUCKET)
@@ -175,6 +211,9 @@ def main() -> None:
     upload_parquet(test, f"{OUTPUT_PREFIX}test.parquet")
 
     manifest = generate_manifest(train, val, test)
+
+    validate_dataset(manifest)
+
     manifest_body = json.dumps(manifest, indent=2)
     manifest_key = f"{OUTPUT_PREFIX}manifest.json"
     s3.put_object(Bucket=S3_BUCKET, Key=manifest_key, Body=manifest_body.encode())
