@@ -3,91 +3,63 @@
 import gzip
 import json
 
-from storm_tracking.parsers import parse_blitzortung_strokes, parse_eswd_html
+from storm_tracking.parsers import parse_blitzortung_strokes, parse_eswd_reports
 
-SAMPLE_ESWD_HTML = """
-<html>
-<body>
-<table class="results">
-<tr><th>Date</th><th>Time</th><th>Location</th><th>Lat</th><th>Lon</th><th>Type</th><th>Intensity</th></tr>
-<tr>
-  <td>2023-07-15</td>
-  <td>14:30</td>
-  <td>Bern</td>
-  <td>46.95</td>
-  <td>7.45</td>
-  <td>Large hail</td>
-  <td>4 cm</td>
-</tr>
-<tr>
-  <td>2023-07-15</td>
-  <td>15:00</td>
-  <td>Thun</td>
-  <td>46.76</td>
-  <td>7.63</td>
-  <td>Severe wind</td>
-  <td>90 km/h</td>
-</tr>
-</table>
-</body>
-</html>
-"""
-
-SAMPLE_ESWD_HTML_NO_INTENSITY = """
-<html>
-<body>
-<table class="results">
-<tr><th>Date</th><th>Time</th><th>Location</th><th>Lat</th><th>Lon</th><th>Type</th></tr>
-<tr>
-  <td>2023-07-15</td>
-  <td>16:00</td>
-  <td>Zurich</td>
-  <td>47.37</td>
-  <td>8.54</td>
-  <td>Damaging lightning</td>
-</tr>
-</table>
-</body>
-</html>
-"""
+SAMPLE_REPORTS = [
+    {
+        "id": "2023-CH-0042",
+        "datetime": "2023-07-15T14:30:00Z",
+        "lat": 46.95,
+        "lon": 7.45,
+        "type": "HAIL",
+        "country": "CH",
+        "city": "Bern",
+        "qc_level": "QC1",
+    },
+    {
+        "id": "2023-CH-0043",
+        "datetime": "2023-07-15T15:00:00Z",
+        "lat": 46.76,
+        "lon": 7.63,
+        "type": "WIND",
+        "country": "CH",
+        "city": "Thun",
+        "qc_level": "QC0+",
+    },
+]
 
 
-class TestParseEswdHtml:
-    def test_parses_two_events(self):
-        events = parse_eswd_html(SAMPLE_ESWD_HTML)
+class TestParseEswdReports:
+    def test_parses_two_reports(self):
+        events = parse_eswd_reports(SAMPLE_REPORTS)
         assert len(events) == 2
 
     def test_first_event_fields(self):
-        events = parse_eswd_html(SAMPLE_ESWD_HTML)
-        assert events[0]["date"] == "2023-07-15"
-        assert events[0]["time_utc"] == "14:30"
-        assert events[0]["location"] == "Bern"
-        assert events[0]["latitude"] == "46.95"
-        assert events[0]["longitude"] == "7.45"
-        assert events[0]["event_type"] == "Large hail"
-        assert events[0]["intensity"] == "4 cm"
+        events = parse_eswd_reports(SAMPLE_REPORTS)
+        assert events[0]["id"] == "2023-CH-0042"
+        assert events[0]["datetime"] == "2023-07-15T14:30:00Z"
+        assert events[0]["latitude"] == 46.95
+        assert events[0]["longitude"] == 7.45
+        assert events[0]["event_type"] == "HAIL"
+        assert events[0]["country"] == "CH"
+        assert events[0]["city"] == "Bern"
+        assert events[0]["qc_level"] == "QC1"
+        assert events[0]["source"] == "ESWD"
 
-    def test_missing_intensity_column(self):
-        events = parse_eswd_html(SAMPLE_ESWD_HTML_NO_INTENSITY)
+    def test_empty_list(self):
+        assert parse_eswd_reports([]) == []
+
+    def test_missing_fields_default_to_none(self):
+        events = parse_eswd_reports([{"type": "TORNADO"}])
         assert len(events) == 1
-        assert events[0]["intensity"] == ""
+        assert events[0]["id"] is None
+        assert events[0]["latitude"] is None
+        assert events[0]["event_type"] == "TORNADO"
+        assert events[0]["source"] == "ESWD"
 
-    def test_empty_html(self):
-        events = parse_eswd_html("<html><body></body></html>")
-        assert events == []
-
-    def test_no_results_table(self):
-        events = parse_eswd_html("<html><body><table></table></body></html>")
-        assert events == []
-
-    def test_header_only_table(self):
-        html = """
-        <table class="results">
-        <tr><th>Date</th><th>Time</th><th>Location</th><th>Lat</th><th>Lon</th><th>Type</th></tr>
-        </table>
-        """
-        events = parse_eswd_html(html)
-        assert events == []
+    def test_preserves_all_reports(self):
+        reports = [{"id": str(i)} for i in range(100)]
+        assert len(parse_eswd_reports(reports)) == 100
 
 
 def _make_blitzortung_data(strokes: list[dict]) -> bytes:

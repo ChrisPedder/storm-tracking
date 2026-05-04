@@ -1,14 +1,14 @@
-"""Scrape the European Severe Weather Database for Swiss thunderstorm events."""
+"""Fetch severe weather events from the ESWD v2 REST API."""
 
 import json
 import logging
 import os
 import sys
 import time
+from calendar import monthrange
 
 import boto3
 import requests
-from bs4 import BeautifulSoup
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,16 +26,16 @@ BBOX_SOUTH = float(os.environ.get("BBOX_SOUTH", "45.3"))
 BBOX_WEST = float(os.environ.get("BBOX_WEST", "5.5"))
 BBOX_EAST = float(os.environ.get("BBOX_EAST", "11.0"))
 
-ESWD_SEARCH_URL = "https://eswd.eu/cgi-bin/eswd.cgi"
+ESWD_API_TOKEN = os.environ["ESWD_API_TOKEN"]
+ESWD_API_URL = "https://eswd.eu/api/v2/reportList"
 
-EVENT_TYPES = [
-    "1",  # Tornado
-    "2",  # Damaging wind / severe wind gust
-    "3",  # Large hail
-    "4",  # Heavy rain / flash flood
-    "5",  # Funnel cloud
-    "7",  # Damaging lightning
-]
+EVENT_TYPES = "TORNADO,WIND,HAIL,PRECIP,FUNNEL,LIGHTNING"
+
+SESSION = requests.Session()
+SESSION.headers.update({
+    "Authorization": f"Bearer {ESWD_API_TOKEN}",
+    "Accept": "application/json",
+})
 
 s3 = boto3.client("s3")
 
@@ -52,66 +52,30 @@ def already_exists(year: int, month: int) -> bool:
         return False
 
 
-def scrape_month(year: int, month: int) -> list[dict]:
-    """Query ESWD for all Swiss convective events in a given month."""
-    last_day = 31 if month in (1, 3, 5, 7, 8, 10, 12) else 30
-    if month == 2:
-        last_day = 29 if (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)) else 28
-
+def fetch_month(year: int, month: int) -> list[dict]:
+    """Fetch all Swiss convective events for a given month from the ESWD v2 API."""
+    last_day = monthrange(year, month)[1]
     params = {
-        "opt": "sch",
-        "continent": "Europe",
-        "country": "CH",
-        "sdate": f"{year}-{month:02d}-01",
-        "edate": f"{year}-{month:02d}-{last_day}",
-        "lat_s": str(BBOX_SOUTH),
-        "lat_n": str(BBOX_NORTH),
-        "lon_w": str(BBOX_WEST),
-        "lon_e": str(BBOX_EAST),
-        "format": "html",
+        "sd": f"{year}-{month:02d}-01T00:00:00Z",
+        "ed": f"{year}-{month:02d}-{last_day}T23:59:59Z",
+        "y0": str(BBOX_SOUTH),
+        "y1": str(BBOX_NORTH),
+        "x0": str(BBOX_WEST),
+        "x1": str(BBOX_EAST),
+        "countries": "CH",
+        "types": EVENT_TYPES,
     }
 
-    events = []
-    for event_type in EVENT_TYPES:
-        params["ession_type"] = event_type
-        resp = requests.get(ESWD_SEARCH_URL, params=params, timeout=60)
-        resp.raise_for_status()
-        events.extend(_parse_response(resp.text, year, month))
-        time.sleep(2)
+    resp = SESSION.get(ESWD_API_URL, params=params, timeout=60)
+    resp.raise_for_status()
+    reports = resp.json()
 
-    logger.info("Found %d events for %d-%02d", len(events), year, month)
-    return events
+    if not isinstance(reports, list):
+        logger.warning("Unexpected response for %d-%02d: %s", year, month, type(reports))
+        return []
 
-
-def _parse_response(html: str, year: int, month: int) -> list[dict]:
-    """Parse ESWD HTML response into structured event records.
-
-    The ESWD results page contains a table of events with columns for date/time,
-    location, coordinates, event type, and intensity. This parser extracts those
-    fields into dictionaries.
-    """
-    soup = BeautifulSoup(html, "lxml")
-    rows = soup.select("table.results tr")
-    events = []
-
-    for row in rows[1:]:  # skip header
-        cells = row.find_all("td")
-        if len(cells) < 6:
-            continue
-        events.append({
-            "date": cells[0].get_text(strip=True),
-            "time_utc": cells[1].get_text(strip=True),
-            "location": cells[2].get_text(strip=True),
-            "latitude": cells[3].get_text(strip=True),
-            "longitude": cells[4].get_text(strip=True),
-            "event_type": cells[5].get_text(strip=True),
-            "intensity": cells[6].get_text(strip=True) if len(cells) > 6 else "",
-            "source": "ESWD",
-            "query_year": year,
-            "query_month": month,
-        })
-
-    return events
+    logger.info("Found %d events for %d-%02d", len(reports), year, month)
+    return reports
 
 
 def upload_events(events: list[dict], year: int, month: int) -> None:
@@ -137,11 +101,12 @@ def main() -> None:
             if already_exists(year, month):
                 logger.info("Skipping %d-%02d (already in S3)", year, month)
                 continue
-            events = scrape_month(year, month)
+            events = fetch_month(year, month)
             upload_events(events, year, month)
             total += len(events)
+            time.sleep(1)
 
-    logger.info("ESWD scraper complete — %d total events", total)
+    logger.info("ESWD scraper complete - %d total events", total)
 
 
 if __name__ == "__main__":

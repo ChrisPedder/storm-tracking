@@ -42,6 +42,7 @@ export class StormTrackingPipelineStack extends cdk.Stack {
   private vpc: ec2.Vpc;
   private taskSg: ec2.SecurityGroup;
   private cdsSecret: secretsmanager.Secret;
+  private eswdSecret: secretsmanager.Secret;
   private logGroup: logs.LogGroup;
   private taskRole: iam.Role;
   private readonly useDockerAssets: boolean;
@@ -101,7 +102,12 @@ export class StormTrackingPipelineStack extends cdk.Stack {
   private createSecrets(): void {
     this.cdsSecret = new secretsmanager.Secret(this, 'CdsApiKey', {
       secretName: 'storm-tracking/cds-api-key',
-      description: 'CDS API credentials — JSON with keys: api_url, api_key',
+      description: 'CDS API credentials - JSON with keys: api_url, api_key',
+    });
+
+    this.eswdSecret = new secretsmanager.Secret(this, 'EswdApiToken', {
+      secretName: 'storm-tracking/eswd-api-token',
+      description: 'ESWD API token - JSON with key: api_token',
     });
   }
 
@@ -225,6 +231,10 @@ export class StormTrackingPipelineStack extends cdk.Stack {
       eswd: this.makeTask('Eswd', 'eswd_scraper', 256, 512, {
         ...commonEnv,
         S3_PREFIX: 'raw/eswd/',
+      }, {
+        secrets: {
+          ESWD_API_TOKEN: ecs.Secret.fromSecretsManager(this.eswdSecret, 'api_token'),
+        },
       }),
 
       blitzortung: this.makeTask('Blitzortung', 'blitzortung_scraper', 256, 512, {

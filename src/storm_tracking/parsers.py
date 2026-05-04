@@ -6,35 +6,27 @@ import gzip
 import json
 from typing import Any
 
-from bs4 import BeautifulSoup
 
+def parse_eswd_reports(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalise ESWD v2 API report objects into a consistent schema.
 
-def parse_eswd_html(html: str) -> list[dict[str, str]]:
-    """Parse an ESWD search results HTML page into structured event records.
-
-    Each event is a dictionary with keys: date, time_utc, location,
-    latitude, longitude, event_type, and intensity.
-
-    Returns an empty list if no results table is found.
+    Extracts the fields we need for labelling and drops the rest.
+    Tolerates missing keys gracefully.
     """
-    soup = BeautifulSoup(html, "lxml")
-    rows = soup.select("table.results tr")
-    events: list[dict[str, str]] = []
-
-    for row in rows[1:]:
-        cells = row.find_all("td")
-        if len(cells) < 6:
-            continue
-        events.append({
-            "date": cells[0].get_text(strip=True),
-            "time_utc": cells[1].get_text(strip=True),
-            "location": cells[2].get_text(strip=True),
-            "latitude": cells[3].get_text(strip=True),
-            "longitude": cells[4].get_text(strip=True),
-            "event_type": cells[5].get_text(strip=True),
-            "intensity": cells[6].get_text(strip=True) if len(cells) > 6 else "",
-        })
-
+    events: list[dict[str, Any]] = []
+    for r in reports:
+        event = {
+            "id": r.get("id"),
+            "datetime": r.get("datetime"),
+            "latitude": r.get("lat"),
+            "longitude": r.get("lon"),
+            "event_type": r.get("type"),
+            "country": r.get("country"),
+            "city": r.get("city"),
+            "qc_level": r.get("qc_level"),
+            "source": "ESWD",
+        }
+        events.append(event)
     return events
 
 
