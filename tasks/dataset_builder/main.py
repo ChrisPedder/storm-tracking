@@ -94,25 +94,27 @@ def stratified_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.D
     years = sorted(df["_year"].unique())
     n_years = len(years)
 
-    n_train = max(1, round(n_years * TRAIN_FRAC))
-    n_val = max(1, round(n_years * VAL_FRAC))
+    n_test = max(1, round(n_years * TEST_FRAC))
+    remaining = n_years - n_test
+    n_val = max(1, round(remaining * VAL_FRAC / max(VAL_FRAC + TRAIN_FRAC, 1e-9)))
+    n_train = remaining - n_val
 
-    train_years = years[:n_train]
-    val_years = years[n_train:n_train + n_val]
+    if n_train < 1:
+        n_train, n_val, n_test = 1, max(0, n_years - 2), 1
+
     test_years = years[n_train + n_val:]
-
-    if not test_years:
-        test_years = [val_years.pop()]
+    val_years = years[n_train:n_train + n_val]
+    train_years = years[:n_train]
 
     train = df[df["_year"].isin(train_years)].drop(columns=["_year"])
     val = df[df["_year"].isin(val_years)].drop(columns=["_year"])
     test = df[df["_year"].isin(test_years)].drop(columns=["_year"])
 
     logger.info(
-        "Split: train=%d (years %d-%d), val=%d (years %d-%d), test=%d (years %d-%d)",
-        len(train), train_years[0], train_years[-1],
-        len(val), val_years[0], val_years[-1],
-        len(test), test_years[0], test_years[-1],
+        "Split: train=%d (%d yr), val=%d (%d yr), test=%d (%d yr)",
+        len(train), len(train_years),
+        len(val), len(val_years),
+        len(test), len(test_years),
     )
     return train, val, test
 

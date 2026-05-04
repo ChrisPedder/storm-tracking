@@ -161,6 +161,73 @@ describe('StormTrackingPipelineStack', () => {
     });
   });
 
+  describe('secrets', () => {
+    test('creates a Secrets Manager secret for the ESWD API token', () => {
+      template.hasResourceProperties('AWS::SecretsManager::Secret', {
+        Name: 'storm-tracking/eswd-api-token',
+      });
+    });
+  });
+
+  describe('schedule', () => {
+    test('creates an EventBridge rule for monthly trigger', () => {
+      template.hasResourceProperties('AWS::Events::Rule', {
+        Name: 'storm-tracking-monthly',
+        ScheduleExpression: 'cron(0 3 1 * ? *)',
+        State: 'DISABLED',
+      });
+    });
+
+    test('EventBridge rule targets the state machine', () => {
+      template.hasResourceProperties('AWS::Events::Rule', {
+        Name: 'storm-tracking-monthly',
+        Targets: Match.arrayWith([
+          Match.objectLike({
+            Input: Match.anyValue(),
+          }),
+        ]),
+      });
+    });
+  });
+
+  describe('alarms', () => {
+    test('creates an SNS topic for alerts', () => {
+      template.hasResourceProperties('AWS::SNS::Topic', {
+        TopicName: 'storm-tracking-alerts',
+      });
+    });
+
+    test('creates a pipeline failure alarm', () => {
+      template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+        AlarmName: 'storm-tracking-pipeline-failure',
+        Threshold: 1,
+        EvaluationPeriods: 1,
+        TreatMissingData: 'notBreaching',
+      });
+    });
+
+    test('creates a cost alarm', () => {
+      template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+        AlarmName: 'storm-tracking-cost',
+        Threshold: 50,
+        TreatMissingData: 'notBreaching',
+      });
+    });
+
+    test('adds email subscription when alertEmail is provided', () => {
+      const app = new cdk.App();
+      const stack = new StormTrackingPipelineStack(app, 'AlertTestStack', {
+        useDockerAssets: false,
+        alertEmail: 'test@example.com',
+      });
+      const alertTemplate = Template.fromStack(stack);
+      alertTemplate.hasResourceProperties('AWS::SNS::Subscription', {
+        Protocol: 'email',
+        Endpoint: 'test@example.com',
+      });
+    });
+  });
+
   describe('outputs', () => {
     test('exports the bucket name', () => {
       template.hasOutput('BucketName', {});
