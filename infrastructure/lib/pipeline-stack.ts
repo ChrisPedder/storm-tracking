@@ -1,13 +1,19 @@
 import * as path from 'path';
 import * as cdk from 'aws-cdk-lib';
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as cloudwatch_actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as events_targets from 'aws-cdk-lib/aws-events-targets';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as sfn_tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as sns_subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Construct } from 'constructs';
 
 const TASKS_DIR = path.join(__dirname, '..', '..', 'tasks');
@@ -27,6 +33,18 @@ export interface StormTrackingPipelineStackProps extends cdk.StackProps {
    * @default true
    */
   readonly useDockerAssets?: boolean;
+
+  /**
+   * Email address for pipeline failure and cost alerts.
+   * @default - no notifications
+   */
+  readonly alertEmail?: string;
+
+  /**
+   * Monthly cost alarm threshold in USD for Fargate tasks.
+   * @default 50
+   */
+  readonly costAlarmThresholdUsd?: number;
 }
 
 interface TaskPair {
@@ -59,6 +77,8 @@ export class StormTrackingPipelineStack extends cdk.Stack {
     this.createTaskRole();
     const tasks = this.createTaskDefinitions();
     this.createStateMachine(tasks);
+    this.createSchedule();
+    this.createAlarms(props?.alertEmail, props?.costAlarmThresholdUsd ?? 50);
     this.createOutputs();
   }
 
@@ -314,6 +334,65 @@ export class StormTrackingPipelineStack extends cdk.Stack {
       definitionBody: sfn.DefinitionBody.fromChainable(chain),
       timeout: cdk.Duration.hours(48),
     });
+  }
+
+  // ── Schedule ────────────────────────────────────────────────
+
+  private createSchedule(): void {
+    const rule = new events.Rule(this, 'MonthlyTrigger', {
+      ruleName: 'storm-tracking-monthly',
+      schedule: events.Schedule.cron({ day: '1', hour: '3', minute: '0' }),
+      enabled: false,
+    });
+
+    const currentYear = new Date().getFullYear();
+    rule.addTarget(new events_targets.SfnStateMachine(this.stateMachine, {
+      input: events.RuleTargetInput.fromObject({
+        start_year: currentYear,
+        end_year: currentYear,
+      }),
+    }));
+  }
+
+  // ── Alarms & Notifications ─────────────────────────────────
+
+  private createAlarms(alertEmail?: string, costThreshold: number = 50): void {
+    const topic = new sns.Topic(this, 'AlertTopic', {
+      topicName: 'storm-tracking-alerts',
+    });
+
+    if (alertEmail) {
+      topic.addSubscription(new sns_subscriptions.EmailSubscription(alertEmail));
+    }
+
+    const failureMetric = this.stateMachine.metricFailed({
+      period: cdk.Duration.hours(1),
+    });
+    const failureAlarm = new cloudwatch.Alarm(this, 'PipelineFailureAlarm', {
+      alarmName: 'storm-tracking-pipeline-failure',
+      metric: failureMetric,
+      threshold: 1,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+    failureAlarm.addAlarmAction(new cloudwatch_actions.SnsAction(topic));
+
+    const costAlarm = new cloudwatch.Alarm(this, 'CostAlarm', {
+      alarmName: 'storm-tracking-cost',
+      metric: new cloudwatch.Metric({
+        namespace: 'AWS/Billing',
+        metricName: 'EstimatedCharges',
+        dimensionsMap: { Currency: 'USD' },
+        statistic: 'Maximum',
+        period: cdk.Duration.hours(6),
+      }),
+      threshold: costThreshold,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+    costAlarm.addAlarmAction(new cloudwatch_actions.SnsAction(topic));
   }
 
   // ── Outputs ─────────────────────────────────────────────────
