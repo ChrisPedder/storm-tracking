@@ -1,33 +1,10 @@
-"""Parsers for storm event data from ESWD and Blitzortung."""
+"""Parsers for storm event data from Blitzortung."""
 
 from __future__ import annotations
 
 import gzip
 import json
 from typing import Any
-
-
-def parse_eswd_reports(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Normalise ESWD v2 API report objects into a consistent schema.
-
-    Extracts the fields we need for labelling and drops the rest.
-    Tolerates missing keys gracefully.
-    """
-    events: list[dict[str, Any]] = []
-    for r in reports:
-        event = {
-            "id": r.get("id"),
-            "datetime": r.get("datetime"),
-            "latitude": r.get("lat"),
-            "longitude": r.get("lon"),
-            "event_type": r.get("type"),
-            "country": r.get("country"),
-            "city": r.get("city"),
-            "qc_level": r.get("qc_level"),
-            "source": "ESWD",
-        }
-        events.append(event)
-    return events
 
 
 def parse_blitzortung_strokes(

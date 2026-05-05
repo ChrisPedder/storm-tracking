@@ -92,8 +92,8 @@ describe('StormTrackingPipelineStack', () => {
       template.resourceCountIs('AWS::ECS::Cluster', 1);
     });
 
-    test('creates six Fargate task definitions', () => {
-      template.resourceCountIs('AWS::ECS::TaskDefinition', 6);
+    test('creates five Fargate task definitions', () => {
+      template.resourceCountIs('AWS::ECS::TaskDefinition', 5);
     });
 
     test('ERA5 task has 1024 CPU and 4096 MiB memory', () => {
@@ -123,7 +123,7 @@ describe('StormTrackingPipelineStack', () => {
       const taskDefs = template.findResources('AWS::ECS::TaskDefinition', {
         Properties: { Cpu: '256', Memory: '512' },
       });
-      expect(Object.keys(taskDefs).length).toBe(3);
+      expect(Object.keys(taskDefs).length).toBe(2);
     });
   });
 
@@ -157,14 +157,6 @@ describe('StormTrackingPipelineStack', () => {
             }),
           ]),
         },
-      });
-    });
-  });
-
-  describe('secrets', () => {
-    test('creates a Secrets Manager secret for the ESWD API token', () => {
-      template.hasResourceProperties('AWS::SecretsManager::Secret', {
-        Name: 'storm-tracking/eswd-api-token',
       });
     });
   });

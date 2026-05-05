@@ -3,63 +3,7 @@
 import gzip
 import json
 
-from storm_tracking.parsers import parse_blitzortung_strokes, parse_eswd_reports
-
-SAMPLE_REPORTS = [
-    {
-        "id": "2023-CH-0042",
-        "datetime": "2023-07-15T14:30:00Z",
-        "lat": 46.95,
-        "lon": 7.45,
-        "type": "HAIL",
-        "country": "CH",
-        "city": "Bern",
-        "qc_level": "QC1",
-    },
-    {
-        "id": "2023-CH-0043",
-        "datetime": "2023-07-15T15:00:00Z",
-        "lat": 46.76,
-        "lon": 7.63,
-        "type": "WIND",
-        "country": "CH",
-        "city": "Thun",
-        "qc_level": "QC0+",
-    },
-]
-
-
-class TestParseEswdReports:
-    def test_parses_two_reports(self):
-        events = parse_eswd_reports(SAMPLE_REPORTS)
-        assert len(events) == 2
-
-    def test_first_event_fields(self):
-        events = parse_eswd_reports(SAMPLE_REPORTS)
-        assert events[0]["id"] == "2023-CH-0042"
-        assert events[0]["datetime"] == "2023-07-15T14:30:00Z"
-        assert events[0]["latitude"] == 46.95
-        assert events[0]["longitude"] == 7.45
-        assert events[0]["event_type"] == "HAIL"
-        assert events[0]["country"] == "CH"
-        assert events[0]["city"] == "Bern"
-        assert events[0]["qc_level"] == "QC1"
-        assert events[0]["source"] == "ESWD"
-
-    def test_empty_list(self):
-        assert parse_eswd_reports([]) == []
-
-    def test_missing_fields_default_to_none(self):
-        events = parse_eswd_reports([{"type": "TORNADO"}])
-        assert len(events) == 1
-        assert events[0]["id"] is None
-        assert events[0]["latitude"] is None
-        assert events[0]["event_type"] == "TORNADO"
-        assert events[0]["source"] == "ESWD"
-
-    def test_preserves_all_reports(self):
-        reports = [{"id": str(i)} for i in range(100)]
-        assert len(parse_eswd_reports(reports)) == 100
+from storm_tracking.parsers import parse_blitzortung_strokes
 
 
 def _make_blitzortung_data(strokes: list[dict]) -> bytes:

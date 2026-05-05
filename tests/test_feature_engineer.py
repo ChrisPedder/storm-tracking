@@ -30,6 +30,7 @@ compute_wind_shear = _mod.compute_wind_shear
 compute_temporal_tendency = _mod.compute_temporal_tendency
 encode_time_features = _mod.encode_time_features
 generate_negatives = _mod.generate_negatives
+label_severe_storms = _mod.label_severe_storms
 
 
 class TestSnapToGrid:
@@ -225,3 +226,60 @@ class TestGenerateNegatives:
         empty = pd.DataFrame({"datetime": [], "grid_lat": [], "grid_lon": [], "label": []})
         negs = generate_negatives(empty)
         assert len(negs) == 0
+
+
+class TestLabelSevereStorms:
+    def _make_strokes(self, n: int, lat: float = 47.0, lon: float = 8.0, base_time: str = "2023-07-15T14:00:00Z") -> pd.DataFrame:
+        base = pd.Timestamp(base_time, tz="UTC")
+        return pd.DataFrame({
+            "datetime": [base + pd.Timedelta(seconds=i * 10) for i in range(n)],
+            "latitude": [lat] * n,
+            "longitude": [lon] * n,
+        })
+
+    def test_above_threshold_labelled_severe(self):
+        strokes = self._make_strokes(150)
+        result = label_severe_storms(strokes)
+        assert len(result) == 1
+        assert result.iloc[0]["label"] == 1
+
+    def test_below_threshold_not_labelled(self):
+        strokes = self._make_strokes(50)
+        result = label_severe_storms(strokes)
+        assert len(result) == 0
+
+    def test_exactly_at_threshold(self):
+        strokes = self._make_strokes(100)
+        result = label_severe_storms(strokes)
+        assert len(result) == 1
+
+    def test_multiple_cells(self):
+        cell_a = self._make_strokes(150, lat=47.0, lon=8.0)
+        cell_b = self._make_strokes(30, lat=46.0, lon=7.0)
+        strokes = pd.concat([cell_a, cell_b], ignore_index=True)
+        result = label_severe_storms(strokes)
+        assert len(result) == 1
+        assert result.iloc[0]["grid_lat"] == 47.0
+
+    def test_multiple_hours_same_cell(self):
+        hour1 = self._make_strokes(120, base_time="2023-07-15T14:00:00Z")
+        hour2 = self._make_strokes(120, base_time="2023-07-15T15:00:00Z")
+        strokes = pd.concat([hour1, hour2], ignore_index=True)
+        result = label_severe_storms(strokes)
+        assert len(result) == 2
+
+    def test_has_stroke_count(self):
+        strokes = self._make_strokes(200)
+        result = label_severe_storms(strokes)
+        assert result.iloc[0]["stroke_count"] == 200
+
+    def test_empty_input(self):
+        empty = pd.DataFrame({"datetime": pd.Series([], dtype="datetime64[ns, UTC]"), "latitude": [], "longitude": []})
+        result = label_severe_storms(empty)
+        assert len(result) == 0
+
+    def test_snaps_to_grid(self):
+        strokes = self._make_strokes(150, lat=47.12, lon=8.07)
+        result = label_severe_storms(strokes)
+        assert result.iloc[0]["grid_lat"] == 47.0
+        assert result.iloc[0]["grid_lon"] == 8.0

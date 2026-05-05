@@ -131,7 +131,7 @@ def generate_manifest(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame
     """Generate a metadata manifest describing the dataset."""
     all_data = pd.concat([train, val, test], ignore_index=True)
     feature_cols = [c for c in all_data.columns if c.startswith("h") or c.endswith(("_sin", "_cos"))]
-    meta_cols = ["event_datetime", "grid_lat", "grid_lon", "label", "event_type"]
+    meta_cols = ["event_datetime", "grid_lat", "grid_lon", "label", "stroke_count"]
 
     feature_stats = {}
     for col in feature_cols:
