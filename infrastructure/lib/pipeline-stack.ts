@@ -60,7 +60,6 @@ export class StormTrackingPipelineStack extends cdk.Stack {
   private vpc: ec2.Vpc;
   private taskSg: ec2.SecurityGroup;
   private cdsSecret: secretsmanager.Secret;
-  private eswdSecret: secretsmanager.Secret;
   private logGroup: logs.LogGroup;
   private taskRole: iam.Role;
   private readonly useDockerAssets: boolean;
@@ -125,10 +124,6 @@ export class StormTrackingPipelineStack extends cdk.Stack {
       description: 'CDS API credentials - JSON with keys: api_url, api_key',
     });
 
-    this.eswdSecret = new secretsmanager.Secret(this, 'EswdApiToken', {
-      secretName: 'storm-tracking/eswd-api-token',
-      description: 'ESWD API token - JSON with key: api_token',
-    });
   }
 
   // ── Logging ─────────────────────────────────────────────────
@@ -248,15 +243,6 @@ export class StormTrackingPipelineStack extends cdk.Stack {
     };
 
     return {
-      eswd: this.makeTask('Eswd', 'eswd_scraper', 256, 512, {
-        ...commonEnv,
-        S3_PREFIX: 'raw/eswd/',
-      }, {
-        secrets: {
-          ESWD_API_TOKEN: ecs.Secret.fromSecretsManager(this.eswdSecret, 'api_token'),
-        },
-      }),
-
       blitzortung: this.makeTask('Blitzortung', 'blitzortung_scraper', 256, 512, {
         ...commonEnv,
         S3_PREFIX: 'raw/blitzortung/',
@@ -306,9 +292,6 @@ export class StormTrackingPipelineStack extends cdk.Stack {
       resultPath: sfn.JsonPath.DISCARD,
     });
 
-    acquire.branch(
-      this.makeStep('ScrapeEswd', tasks.eswd, { envOverrides: yearOverrides }),
-    );
     acquire.branch(
       this.makeStep('ScrapeBlitzortung', tasks.blitzortung, { envOverrides: yearOverrides }),
     );

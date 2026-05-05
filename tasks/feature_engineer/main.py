@@ -88,28 +88,10 @@ def download_to_tempfile(key: str, suffix: str) -> str:
 
 # ── Event loading ─────────────────────────────────────────────
 
-def load_eswd_events() -> pd.DataFrame:
-    prefix = f"{RAW_PREFIX}eswd/"
-    keys = list_s3_keys(prefix)
-    all_events = []
-    for key in keys:
-        if key.endswith("/events.json"):
-            events = load_json_from_s3(key)
-            all_events.extend(events)
-
-    if not all_events:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(all_events)
-    df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
-    df = df.dropna(subset=["latitude", "longitude", "datetime"])
-    df["latitude"] = df["latitude"].astype(float)
-    df["longitude"] = df["longitude"].astype(float)
-    logger.info("Loaded %d ESWD events", len(df))
-    return df
+SEVERE_THRESHOLD = int(os.environ.get("SEVERE_THRESHOLD", "100"))
 
 
-def load_blitzortung_events() -> pd.DataFrame:
+def load_blitzortung_strokes() -> pd.DataFrame:
     prefix = f"{RAW_PREFIX}blitzortung/"
     keys = list_s3_keys(prefix)
     all_strokes = []
@@ -126,6 +108,35 @@ def load_blitzortung_events() -> pd.DataFrame:
     df = df.dropna(subset=["latitude", "longitude", "datetime"])
     logger.info("Loaded %d Blitzortung strokes", len(df))
     return df
+
+
+def label_severe_storms(strokes_df: pd.DataFrame) -> pd.DataFrame:
+    """Cluster strokes by grid cell and hour, label cells with >SEVERE_THRESHOLD strokes."""
+    if strokes_df.empty:
+        return pd.DataFrame(columns=["datetime", "grid_lat", "grid_lon", "label", "stroke_count"])
+    df = strokes_df.copy()
+    df["grid_lat"] = df.apply(
+        lambda r: snap_to_grid(r["latitude"], r["longitude"])[0], axis=1,
+    )
+    df["grid_lon"] = df.apply(
+        lambda r: snap_to_grid(r["latitude"], r["longitude"])[1], axis=1,
+    )
+    df["hour_floor"] = df["datetime"].dt.floor("h")
+
+    counts = (
+        df.groupby(["grid_lat", "grid_lon", "hour_floor"])
+        .size()
+        .reset_index(name="stroke_count")
+    )
+
+    severe = counts[counts["stroke_count"] >= SEVERE_THRESHOLD].copy()
+    severe = severe.rename(columns={"hour_floor": "datetime"})
+    severe["label"] = 1
+    logger.info(
+        "Found %d severe storm cell-hours (>=%d strokes) from %d total cell-hours",
+        len(severe), SEVERE_THRESHOLD, len(counts),
+    )
+    return severe[["datetime", "grid_lat", "grid_lon", "label", "stroke_count"]]
 
 
 # ── ERA5 loading ──────────────────────────────────────────────
@@ -319,8 +330,8 @@ def process_month(
             "label": event["label"],
         }
 
-        if "event_type" in event:
-            all_features["event_type"] = event["event_type"]
+        if "stroke_count" in event:
+            all_features["stroke_count"] = event["stroke_count"]
 
         prev_features = None
         for lead_h in LEAD_HOURS:
@@ -379,26 +390,24 @@ def main() -> None:
     logger.info("  S3 bucket: %s", S3_BUCKET)
     logger.info("  Raw prefix: %s", RAW_PREFIX)
     logger.info("  Output prefix: %s", OUTPUT_PREFIX)
+    logger.info("  Severe threshold: %d strokes", SEVERE_THRESHOLD)
 
-    eswd_df = load_eswd_events()
-    if eswd_df.empty:
-        logger.error("No ESWD events found - cannot proceed")
+    strokes_df = load_blitzortung_strokes()
+    if strokes_df.empty:
+        logger.error("No Blitzortung strokes found - cannot proceed")
         sys.exit(1)
 
-    eswd_df["grid_lat"] = eswd_df.apply(
-        lambda r: snap_to_grid(r["latitude"], r["longitude"])[0], axis=1,
-    )
-    eswd_df["grid_lon"] = eswd_df.apply(
-        lambda r: snap_to_grid(r["latitude"], r["longitude"])[1], axis=1,
-    )
-    eswd_df["label"] = 1
+    severe_df = label_severe_storms(strokes_df)
+    if severe_df.empty:
+        logger.error("No severe storm cell-hours found - cannot proceed")
+        sys.exit(1)
 
     logger.info("Generating negative samples")
-    negatives_df = generate_negatives(eswd_df)
+    negatives_df = generate_negatives(severe_df)
     logger.info("Generated %d negative samples", len(negatives_df))
 
     all_samples = pd.concat([
-        eswd_df[["datetime", "grid_lat", "grid_lon", "label", "event_type"]],
+        severe_df[["datetime", "grid_lat", "grid_lon", "label"]],
         negatives_df,
     ], ignore_index=True)
     all_samples["year"] = all_samples["datetime"].dt.year
