@@ -16,6 +16,7 @@ import tempfile
 from datetime import datetime, timedelta
 
 import boto3
+import cfgrib
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -143,14 +144,14 @@ def label_severe_storms(flashes_df: pd.DataFrame) -> pd.DataFrame:
 
 def open_era5_grib(key: str) -> xr.Dataset:
     path = download_to_tempfile(key, ".grib")
-    try:
-        ds = xr.open_dataset(path, engine="cfgrib")
-    except Exception:
-        ds = xr.open_dataset(
-            path, engine="cfgrib",
-            backend_kwargs={"indexpath": ""},
-        )
-    return ds
+    datasets = cfgrib.open_datasets(
+        path,
+        backend_kwargs={"indexpath": ""},
+    )
+    if len(datasets) == 1:
+        return datasets[0]
+    merged = xr.merge(datasets, compat="override", join="outer")
+    return merged
 
 
 def era5_single_key(year: int, month: int) -> str:
