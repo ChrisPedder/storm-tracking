@@ -61,7 +61,8 @@ def extract_flashes_from_nc(nc_bytes: bytes) -> list[dict]:
     try:
         ds = netCDF4.Dataset(tmp_path, "r")
         try:
-            if "flash_time" not in ds.variables:
+            if "latitude" not in ds.variables:
+                logger.debug("No 'latitude' variable found; variables: %s", list(ds.variables.keys()))
                 return []
 
             times = netCDF4.num2date(
@@ -70,11 +71,11 @@ def extract_flashes_from_nc(nc_bytes: bytes) -> list[dict]:
                 only_use_cftime_datetimes=False,
                 only_use_python_datetimes=True,
             )
-            lats = ds.variables["flash_lat"][:]
-            lons = ds.variables["flash_lon"][:]
+            lats = ds.variables["latitude"][:]
+            lons = ds.variables["longitude"][:]
             radiances = (
-                ds.variables["flash_radiance"][:]
-                if "flash_radiance" in ds.variables
+                ds.variables["radiance"][:]
+                if "radiance" in ds.variables
                 else [None] * len(lats)
             )
 
