@@ -76,6 +76,12 @@ describe('StormTrackingPipelineStack', () => {
         Name: 'storm-tracking/cds-api-key',
       });
     });
+
+    test('creates a Secrets Manager secret for the EUMETSAT API key', () => {
+      template.hasResourceProperties('AWS::SecretsManager::Secret', {
+        Name: 'storm-tracking/eumetsat-api-key',
+      });
+    });
   });
 
   describe('logging', () => {
@@ -119,11 +125,18 @@ describe('StormTrackingPipelineStack', () => {
       });
     });
 
-    test('scraper tasks have 256 CPU and 512 MiB memory', () => {
-      const taskDefs = template.findResources('AWS::ECS::TaskDefinition', {
-        Properties: { Cpu: '256', Memory: '512' },
+    test('lightning task has 512 CPU and 1024 MiB memory', () => {
+      template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+        Cpu: '512',
+        Memory: '1024',
       });
-      expect(Object.keys(taskDefs).length).toBe(2);
+    });
+
+    test('topography task has 256 CPU and 512 MiB memory', () => {
+      template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+        Cpu: '256',
+        Memory: '512',
+      });
     });
   });
 

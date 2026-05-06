@@ -91,30 +91,30 @@ def download_to_tempfile(key: str, suffix: str) -> str:
 SEVERE_THRESHOLD = int(os.environ.get("SEVERE_THRESHOLD", "100"))
 
 
-def load_blitzortung_strokes() -> pd.DataFrame:
-    prefix = f"{RAW_PREFIX}blitzortung/"
+def load_lightning_flashes() -> pd.DataFrame:
+    prefix = f"{RAW_PREFIX}lightning/"
     keys = list_s3_keys(prefix)
-    all_strokes = []
+    all_flashes = []
     for key in keys:
-        if key.endswith("/strokes.json.gz"):
-            strokes = load_gzip_json_from_s3(key)
-            all_strokes.extend(strokes)
+        if key.endswith("/flashes.json.gz"):
+            flashes = load_gzip_json_from_s3(key)
+            all_flashes.extend(flashes)
 
-    if not all_strokes:
+    if not all_flashes:
         return pd.DataFrame()
 
-    df = pd.DataFrame(all_strokes)
-    df["datetime"] = pd.to_datetime(df["timestamp_ns"], unit="ns", utc=True)
+    df = pd.DataFrame(all_flashes)
+    df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
     df = df.dropna(subset=["latitude", "longitude", "datetime"])
-    logger.info("Loaded %d Blitzortung strokes", len(df))
+    logger.info("Loaded %d lightning flashes", len(df))
     return df
 
 
-def label_severe_storms(strokes_df: pd.DataFrame) -> pd.DataFrame:
-    """Cluster strokes by grid cell and hour, label cells with >SEVERE_THRESHOLD strokes."""
-    if strokes_df.empty:
-        return pd.DataFrame(columns=["datetime", "grid_lat", "grid_lon", "label", "stroke_count"])
-    df = strokes_df.copy()
+def label_severe_storms(flashes_df: pd.DataFrame) -> pd.DataFrame:
+    """Cluster flashes by grid cell and hour, label cells with >SEVERE_THRESHOLD flashes."""
+    if flashes_df.empty:
+        return pd.DataFrame(columns=["datetime", "grid_lat", "grid_lon", "label", "flash_count"])
+    df = flashes_df.copy()
     df["grid_lat"] = df.apply(
         lambda r: snap_to_grid(r["latitude"], r["longitude"])[0], axis=1,
     )
@@ -126,17 +126,17 @@ def label_severe_storms(strokes_df: pd.DataFrame) -> pd.DataFrame:
     counts = (
         df.groupby(["grid_lat", "grid_lon", "hour_floor"])
         .size()
-        .reset_index(name="stroke_count")
+        .reset_index(name="flash_count")
     )
 
-    severe = counts[counts["stroke_count"] >= SEVERE_THRESHOLD].copy()
+    severe = counts[counts["flash_count"] >= SEVERE_THRESHOLD].copy()
     severe = severe.rename(columns={"hour_floor": "datetime"})
     severe["label"] = 1
     logger.info(
-        "Found %d severe storm cell-hours (>=%d strokes) from %d total cell-hours",
+        "Found %d severe storm cell-hours (>=%d flashes) from %d total cell-hours",
         len(severe), SEVERE_THRESHOLD, len(counts),
     )
-    return severe[["datetime", "grid_lat", "grid_lon", "label", "stroke_count"]]
+    return severe[["datetime", "grid_lat", "grid_lon", "label", "flash_count"]]
 
 
 # ── ERA5 loading ──────────────────────────────────────────────
@@ -330,8 +330,8 @@ def process_month(
             "label": event["label"],
         }
 
-        if "stroke_count" in event:
-            all_features["stroke_count"] = event["stroke_count"]
+        if "flash_count" in event:
+            all_features["flash_count"] = event["flash_count"]
 
         prev_features = None
         for lead_h in LEAD_HOURS:
@@ -392,9 +392,9 @@ def main() -> None:
     logger.info("  Output prefix: %s", OUTPUT_PREFIX)
     logger.info("  Severe threshold: %d strokes", SEVERE_THRESHOLD)
 
-    strokes_df = load_blitzortung_strokes()
+    strokes_df = load_lightning_flashes()
     if strokes_df.empty:
-        logger.error("No Blitzortung strokes found - cannot proceed")
+        logger.error("No lightning flashes found - cannot proceed")
         sys.exit(1)
 
     severe_df = label_severe_storms(strokes_df)

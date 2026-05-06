@@ -60,6 +60,7 @@ export class StormTrackingPipelineStack extends cdk.Stack {
   private vpc: ec2.Vpc;
   private taskSg: ec2.SecurityGroup;
   private cdsSecret: secretsmanager.Secret;
+  private eumetsatSecret: secretsmanager.Secret;
   private logGroup: logs.LogGroup;
   private taskRole: iam.Role;
   private readonly useDockerAssets: boolean;
@@ -124,6 +125,10 @@ export class StormTrackingPipelineStack extends cdk.Stack {
       description: 'CDS API credentials - JSON with keys: api_url, api_key',
     });
 
+    this.eumetsatSecret = new secretsmanager.Secret(this, 'EumetsatApiKey', {
+      secretName: 'storm-tracking/eumetsat-api-key',
+      description: 'EUMETSAT Data Store credentials - JSON with keys: consumer_key, consumer_secret',
+    });
   }
 
   // ── Logging ─────────────────────────────────────────────────
@@ -245,9 +250,14 @@ export class StormTrackingPipelineStack extends cdk.Stack {
     };
 
     return {
-      blitzortung: this.makeTask('Blitzortung', 'blitzortung_scraper', 256, 512, {
+      lightning: this.makeTask('Lightning', 'eumetsat_lightning', 512, 1024, {
         ...commonEnv,
-        S3_PREFIX: 'raw/blitzortung/',
+        S3_PREFIX: 'raw/lightning/',
+      }, {
+        secrets: {
+          EUMETSAT_KEY: ecs.Secret.fromSecretsManager(this.eumetsatSecret, 'consumer_key'),
+          EUMETSAT_SECRET: ecs.Secret.fromSecretsManager(this.eumetsatSecret, 'consumer_secret'),
+        },
       }),
 
       era5: this.makeTask('Era5', 'era5_downloader', 1024, 4096, {
@@ -295,7 +305,7 @@ export class StormTrackingPipelineStack extends cdk.Stack {
     });
 
     acquire.branch(
-      this.makeStep('ScrapeBlitzortung', tasks.blitzortung, { envOverrides: yearOverrides }),
+      this.makeStep('DownloadLightning', tasks.lightning, { envOverrides: yearOverrides }),
     );
     acquire.branch(
       this.makeStep('DownloadEra5', tasks.era5, {

@@ -268,10 +268,10 @@ class TestLabelSevereStorms:
         result = label_severe_storms(strokes)
         assert len(result) == 2
 
-    def test_has_stroke_count(self):
+    def test_has_flash_count(self):
         strokes = self._make_strokes(200)
         result = label_severe_storms(strokes)
-        assert result.iloc[0]["stroke_count"] == 200
+        assert result.iloc[0]["flash_count"] == 200
 
     def test_empty_input(self):
         empty = pd.DataFrame({"datetime": pd.Series([], dtype="datetime64[ns, UTC]"), "latitude": [], "longitude": []})
