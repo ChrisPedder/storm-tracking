@@ -176,10 +176,9 @@ def extract_point_features(
     features = {}
     for var in ds.data_vars:
         val = point[var].values
-        if np.isscalar(val):
-            features[var] = float(val) if np.isfinite(val) else np.nan
-        else:
-            features[var] = float(val.item()) if np.isfinite(val.item()) else np.nan
+        if not np.isscalar(val):
+            val = val.flat[0]
+        features[var] = float(val) if np.isfinite(val) else np.nan
     return features
 
 
