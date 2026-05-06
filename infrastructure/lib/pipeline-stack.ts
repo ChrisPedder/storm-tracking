@@ -155,7 +155,9 @@ export class StormTrackingPipelineStack extends cdk.Stack {
 
   private containerImage(directory: string): ecs.ContainerImage {
     if (this.useDockerAssets) {
-      return ecs.ContainerImage.fromAsset(path.join(TASKS_DIR, directory));
+      return ecs.ContainerImage.fromAsset(path.join(TASKS_DIR, directory), {
+        platform: cdk.aws_ecr_assets.Platform.LINUX_AMD64,
+      });
     }
     return ecs.ContainerImage.fromRegistry('public.ecr.aws/docker/library/python:3.11-slim');
   }
