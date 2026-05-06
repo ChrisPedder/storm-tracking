@@ -104,7 +104,7 @@ def load_lightning_flashes() -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(all_flashes)
-    df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
+    df["datetime"] = pd.to_datetime(df["datetime"], format="ISO8601", utc=True)
     df = df.dropna(subset=["latitude", "longitude", "datetime"])
     logger.info("Loaded %d lightning flashes", len(df))
     return df
