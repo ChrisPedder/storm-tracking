@@ -289,6 +289,12 @@ export class StormTrackingPipelineStack extends cdk.Stack {
         INPUT_PREFIX: 'processed/',
         OUTPUT_PREFIX: 'output/',
       }),
+
+      trainer: this.makeTask('Trainer', 'model_trainer', 2048, 8192, {
+        S3_BUCKET: this.bucket.bucketName,
+        INPUT_PREFIX: 'output/',
+        OUTPUT_PREFIX: 'output/model/',
+      }),
     };
   }
 
@@ -321,8 +327,11 @@ export class StormTrackingPipelineStack extends cdk.Stack {
       timeoutHours: 12,
     });
     const datasetStep = this.makeStep('BuildDataset', tasks.dataset);
+    const trainerStep = this.makeStep('TrainModel', tasks.trainer, {
+      timeoutHours: 2,
+    });
 
-    const chain = acquire.next(featuresStep).next(datasetStep);
+    const chain = acquire.next(featuresStep).next(datasetStep).next(trainerStep);
 
     this.stateMachine = new sfn.StateMachine(this, 'Pipeline', {
       stateMachineName: 'storm-tracking-pipeline',

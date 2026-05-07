@@ -98,8 +98,8 @@ describe('StormTrackingPipelineStack', () => {
       template.resourceCountIs('AWS::ECS::Cluster', 1);
     });
 
-    test('creates five Fargate task definitions', () => {
-      template.resourceCountIs('AWS::ECS::TaskDefinition', 5);
+    test('creates six Fargate task definitions', () => {
+      template.resourceCountIs('AWS::ECS::TaskDefinition', 6);
     });
 
     test('ERA5 task has 1024 CPU and 4096 MiB memory', () => {
@@ -136,6 +136,14 @@ describe('StormTrackingPipelineStack', () => {
       template.hasResourceProperties('AWS::ECS::TaskDefinition', {
         Cpu: '256',
         Memory: '512',
+      });
+    });
+
+    test('model trainer task has 2048 CPU and 8192 MiB memory', () => {
+      template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+        Family: 'storm-tracking-model-trainer',
+        Cpu: '2048',
+        Memory: '8192',
       });
     });
   });

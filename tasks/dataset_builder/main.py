@@ -12,6 +12,7 @@ import os
 import sys
 
 import boto3
+import numpy as np
 import pandas as pd
 
 logging.basicConfig(
@@ -86,35 +87,55 @@ def quality_filter(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def stratified_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Split by year to avoid temporal leakage.
+    """Split by random days to avoid temporal leakage.
 
-    Assigns entire years to splits, approximately matching target fractions.
+    Assigns entire calendar days to splits so that correlated hourly
+    samples from the same storm never leak across splits.  When multiple
+    years are available, years are split first; within a single year,
+    days are shuffled and assigned proportionally.
     """
-    df["_year"] = pd.to_datetime(df["event_datetime"]).dt.year
+    seed = int(os.environ.get("SPLIT_SEED", "42"))
+    dt = pd.to_datetime(df["event_datetime"])
+    df["_year"] = dt.dt.year
     years = sorted(df["_year"].unique())
-    n_years = len(years)
 
-    n_test = max(1, round(n_years * TEST_FRAC))
-    remaining = n_years - n_test
-    n_val = max(1, round(remaining * VAL_FRAC / max(VAL_FRAC + TRAIN_FRAC, 1e-9)))
-    n_train = remaining - n_val
+    if len(years) > 2:
+        n_test = max(1, round(len(years) * TEST_FRAC))
+        remaining = len(years) - n_test
+        n_val = max(1, round(remaining * VAL_FRAC / max(VAL_FRAC + TRAIN_FRAC, 1e-9)))
+        train_years = years[: remaining - n_val]
+        val_years = years[remaining - n_val : remaining]
+        test_years = years[remaining:]
+        train = df[df["_year"].isin(train_years)].drop(columns=["_year"])
+        val = df[df["_year"].isin(val_years)].drop(columns=["_year"])
+        test = df[df["_year"].isin(test_years)].drop(columns=["_year"])
+        logger.info(
+            "Split: train=%d (%d yr), val=%d (%d yr), test=%d (%d yr)",
+            len(train), len(train_years), len(val), len(val_years), len(test), len(test_years),
+        )
+        return train, val, test
 
-    if n_train < 1:
-        n_train, n_val, n_test = 1, max(0, n_years - 2), 1
+    df["_date"] = dt.dt.date
+    days = sorted(df["_date"].unique())
+    rng = np.random.default_rng(seed)
+    rng.shuffle(days)
 
-    test_years = years[n_train + n_val:]
-    val_years = years[n_train:n_train + n_val]
-    train_years = years[:n_train]
+    n_days = len(days)
+    n_test = max(1, round(n_days * TEST_FRAC))
+    n_val = max(1, round(n_days * VAL_FRAC))
+    n_train = n_days - n_val - n_test
 
-    train = df[df["_year"].isin(train_years)].drop(columns=["_year"])
-    val = df[df["_year"].isin(val_years)].drop(columns=["_year"])
-    test = df[df["_year"].isin(test_years)].drop(columns=["_year"])
+    train_days = set(days[:n_train])
+    val_days = set(days[n_train:n_train + n_val])
+    test_days = set(days[n_train + n_val:])
+
+    train = df[df["_date"].isin(train_days)].drop(columns=["_year", "_date"])
+    val = df[df["_date"].isin(val_days)].drop(columns=["_year", "_date"])
+    test = df[df["_date"].isin(test_days)].drop(columns=["_year", "_date"])
 
     logger.info(
-        "Split: train=%d (%d yr), val=%d (%d yr), test=%d (%d yr)",
-        len(train), len(train_years),
-        len(val), len(val_years),
-        len(test), len(test_years),
+        "Split: train=%d (%d days), val=%d (%d days), test=%d (%d days)",
+        len(train), len(train_days), len(val), len(val_days), len(test), len(test_days),
     )
     return train, val, test
 
