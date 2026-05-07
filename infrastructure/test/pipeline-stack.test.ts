@@ -98,8 +98,8 @@ describe('StormTrackingPipelineStack', () => {
       template.resourceCountIs('AWS::ECS::Cluster', 1);
     });
 
-    test('creates six Fargate task definitions', () => {
-      template.resourceCountIs('AWS::ECS::TaskDefinition', 6);
+    test('creates seven Fargate task definitions', () => {
+      template.resourceCountIs('AWS::ECS::TaskDefinition', 7);
     });
 
     test('ERA5 task has 1024 CPU and 4096 MiB memory', () => {
@@ -146,12 +146,26 @@ describe('StormTrackingPipelineStack', () => {
         Memory: '8192',
       });
     });
+
+    test('forecast task has 1024 CPU and 2048 MiB memory', () => {
+      template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+        Family: 'storm-tracking-storm-forecast',
+        Cpu: '1024',
+        Memory: '2048',
+      });
+    });
   });
 
   describe('Step Functions', () => {
     test('creates a state machine named storm-tracking-pipeline', () => {
       template.hasResourceProperties('AWS::StepFunctions::StateMachine', {
         StateMachineName: 'storm-tracking-pipeline',
+      });
+    });
+
+    test('creates a forecast state machine named storm-tracking-forecast', () => {
+      template.hasResourceProperties('AWS::StepFunctions::StateMachine', {
+        StateMachineName: 'storm-tracking-forecast',
       });
     });
   });
@@ -201,6 +215,14 @@ describe('StormTrackingPipelineStack', () => {
         ]),
       });
     });
+
+    test('creates an EventBridge rule for twice-daily forecast', () => {
+      template.hasResourceProperties('AWS::Events::Rule', {
+        Name: 'storm-tracking-forecast',
+        ScheduleExpression: 'cron(0 7,19 * * ? *)',
+        State: 'DISABLED',
+      });
+    });
   });
 
   describe('alarms', () => {
@@ -248,6 +270,10 @@ describe('StormTrackingPipelineStack', () => {
 
     test('exports the state machine ARN', () => {
       template.hasOutput('StateMachineArn', {});
+    });
+
+    test('exports the forecast state machine ARN', () => {
+      template.hasOutput('ForecastStateMachineArn', {});
     });
 
     test('exports the cluster ARN', () => {

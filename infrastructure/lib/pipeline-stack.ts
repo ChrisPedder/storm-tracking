@@ -56,6 +56,7 @@ export class StormTrackingPipelineStack extends cdk.Stack {
   public bucket: s3.Bucket;
   public cluster: ecs.Cluster;
   public stateMachine: sfn.StateMachine;
+  public forecastStateMachine: sfn.StateMachine;
 
   private vpc: ec2.Vpc;
   private taskSg: ec2.SecurityGroup;
@@ -77,6 +78,7 @@ export class StormTrackingPipelineStack extends cdk.Stack {
     this.createTaskRole();
     const tasks = this.createTaskDefinitions();
     this.createStateMachine(tasks);
+    this.createForecastStateMachine(tasks);
     this.createSchedule();
     this.createAlarms(props?.alertEmail, props?.costAlarmThresholdUsd ?? 50);
     this.createOutputs();
@@ -295,6 +297,16 @@ export class StormTrackingPipelineStack extends cdk.Stack {
         INPUT_PREFIX: 'output/',
         OUTPUT_PREFIX: 'output/model/',
       }),
+
+      forecast: this.makeTask('Forecast', 'storm_forecast', 1024, 2048, {
+        S3_BUCKET: this.bucket.bucketName,
+        MODEL_PREFIX: 'output/model/',
+        OUTPUT_PREFIX: 'forecast/',
+        BBOX_NORTH: SWITZERLAND_BBOX.north,
+        BBOX_SOUTH: SWITZERLAND_BBOX.south,
+        BBOX_WEST: SWITZERLAND_BBOX.west,
+        BBOX_EAST: SWITZERLAND_BBOX.east,
+      }),
     };
   }
 
@@ -338,6 +350,27 @@ export class StormTrackingPipelineStack extends cdk.Stack {
       definitionBody: sfn.DefinitionBody.fromChainable(chain),
       timeout: cdk.Duration.hours(48),
     });
+  }
+
+  // ── Forecast State Machine ───────────────────────────────────
+
+  private createForecastStateMachine(tasks: Record<string, TaskPair>): void {
+    const forecastStep = this.makeStep('RunForecast', tasks.forecast, {
+      timeoutHours: 1,
+    });
+
+    this.forecastStateMachine = new sfn.StateMachine(this, 'ForecastPipeline', {
+      stateMachineName: 'storm-tracking-forecast',
+      definitionBody: sfn.DefinitionBody.fromChainable(forecastStep),
+      timeout: cdk.Duration.hours(2),
+    });
+
+    const rule = new events.Rule(this, 'ForecastTrigger', {
+      ruleName: 'storm-tracking-forecast',
+      schedule: events.Schedule.cron({ hour: '7,19', minute: '0' }),
+      enabled: false,
+    });
+    rule.addTarget(new events_targets.SfnStateMachine(this.forecastStateMachine));
   }
 
   // ── Schedule ────────────────────────────────────────────────
@@ -404,6 +437,7 @@ export class StormTrackingPipelineStack extends cdk.Stack {
   private createOutputs(): void {
     new cdk.CfnOutput(this, 'BucketName', { value: this.bucket.bucketName });
     new cdk.CfnOutput(this, 'StateMachineArn', { value: this.stateMachine.stateMachineArn });
+    new cdk.CfnOutput(this, 'ForecastStateMachineArn', { value: this.forecastStateMachine.stateMachineArn });
     new cdk.CfnOutput(this, 'ClusterArn', { value: this.cluster.clusterArn });
     new cdk.CfnOutput(this, 'PublicSubnetIds', {
       value: cdk.Fn.join(',', this.vpc.publicSubnets.map(s => s.subnetId)),
