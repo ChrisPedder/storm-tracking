@@ -349,7 +349,7 @@ export class StormTrackingPipelineStack extends cdk.Stack {
       enabled: false,
     });
 
-    const currentYear = new Date().getFullYear();
+    const currentYear = new Date().getFullYear().toString();
     rule.addTarget(new events_targets.SfnStateMachine(this.stateMachine, {
       input: events.RuleTargetInput.fromObject({
         start_year: currentYear,
