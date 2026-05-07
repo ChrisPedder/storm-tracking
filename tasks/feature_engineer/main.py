@@ -164,6 +164,9 @@ def era5_pressure_key(year: int, month: int) -> str:
 
 # ── Feature extraction ────────────────────────────────────────
 
+SKIP_VARS = {"cin", "tp", "cp", "kx", "totalx"}
+
+
 def extract_point_features(
     ds: xr.Dataset, lat: float, lon: float, time: np.datetime64,
 ) -> dict[str, float]:
@@ -175,6 +178,8 @@ def extract_point_features(
 
     features = {}
     for var in ds.data_vars:
+        if var in SKIP_VARS:
+            continue
         val = point[var].values
         if not np.isscalar(val):
             val = val.flat[0]
