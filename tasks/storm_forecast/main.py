@@ -75,69 +75,108 @@ def build_grid() -> list[tuple[float, float]]:
     return [snap_to_grid(la, lo) for la in lats for lo in lons]
 
 
-# ── Feature extraction ────────────────────────────────────────
+# ── Vectorized feature extraction ─────────────────────────────
 
-def extract_point(ds_slice: xr.Dataset, lat: float, lon: float) -> dict[str, float]:
-    try:
-        point = ds_slice.sel(latitude=lat, longitude=lon, method="nearest")
-    except (KeyError, ValueError):
-        return {}
-    features = {}
+def find_nearest_idx(arr: np.ndarray, value: float) -> int:
+    return int(np.argmin(np.abs(arr - value)))
+
+
+def precompute_grid_indices(
+    ds_lats: np.ndarray, ds_lons: np.ndarray, grid: list[tuple[float, float]],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Precompute lat/lon array indices for centre and 3x3 patch of every grid point."""
+    n = len(grid)
+    centre_ilat = np.empty(n, dtype=int)
+    centre_ilon = np.empty(n, dtype=int)
+    patch_ilat = np.empty((n, 9), dtype=int)
+    patch_ilon = np.empty((n, 9), dtype=int)
+
+    offsets = [(-1, -1), (-1, 0), (-1, 1),
+               (0, -1),  (0, 0),  (0, 1),
+               (1, -1),  (1, 0),  (1, 1)]
+
+    for k, (lat, lon) in enumerate(grid):
+        ci = find_nearest_idx(ds_lats, lat)
+        cj = find_nearest_idx(ds_lons, lon)
+        centre_ilat[k] = ci
+        centre_ilon[k] = cj
+        for p, (di, dj) in enumerate(offsets):
+            pi = find_nearest_idx(ds_lats, lat + di * GRID_RES)
+            pj = find_nearest_idx(ds_lons, lon + dj * GRID_RES)
+            patch_ilat[k, p] = pi
+            patch_ilon[k, p] = pj
+
+    return centre_ilat, centre_ilon, patch_ilat, patch_ilon
+
+
+def extract_all_patch_features(
+    ds_slice: xr.Dataset,
+    centre_ilat: np.ndarray, centre_ilon: np.ndarray,
+    patch_ilat: np.ndarray, patch_ilon: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """Extract centre + spatial stats for all grid points at once using numpy indexing."""
+    n = len(centre_ilat)
+    features: dict[str, np.ndarray] = {}
+
     for var in ds_slice.data_vars:
         if var in SKIP_VARS:
             continue
-        val = point[var].values
-        if not np.isscalar(val):
-            val = val.flat[0]
-        features[var] = float(val) if np.isfinite(val) else np.nan
+        arr = ds_slice[var].values
+        while arr.ndim > 2:
+            arr = arr[0]
+        if arr.ndim != 2:
+            continue
+
+        centre_vals = arr[centre_ilat, centre_ilon].astype(float)
+        features[f"{var}_centre"] = centre_vals
+
+        patch_vals = arr[patch_ilat, patch_ilon].astype(float)
+        with np.errstate(all="ignore"):
+            features[f"{var}_mean"] = np.nanmean(patch_vals, axis=1)
+            features[f"{var}_std"] = np.nanstd(patch_vals, axis=1)
+            features[f"{var}_max"] = np.nanmax(patch_vals, axis=1)
+            features[f"{var}_min"] = np.nanmin(patch_vals, axis=1)
+
     return features
 
 
-def extract_patch(ds_slice: xr.Dataset, lat: float, lon: float) -> dict[str, float]:
-    patch_points = grid_patch(lat, lon)
-    values_by_var: dict[str, list[float]] = {}
-    for plat, plon in patch_points:
-        pf = extract_point(ds_slice, plat, plon)
-        for var, val in pf.items():
-            values_by_var.setdefault(var, []).append(val)
-
-    features = {}
-    centre = extract_point(ds_slice, lat, lon)
-    for var, val in centre.items():
-        features[f"{var}_centre"] = val
-
-    for var, vals in values_by_var.items():
-        arr = np.array(vals)
-        valid = arr[np.isfinite(arr)]
-        if len(valid) > 0:
-            features[f"{var}_mean"] = float(np.mean(valid))
-            features[f"{var}_std"] = float(np.std(valid))
-            features[f"{var}_max"] = float(np.max(valid))
-            features[f"{var}_min"] = float(np.min(valid))
-        else:
-            for suffix in ("_mean", "_std", "_max", "_min"):
-                features[f"{var}{suffix}"] = np.nan
+def extract_all_point_features(
+    ds_slice: xr.Dataset,
+    centre_ilat: np.ndarray, centre_ilon: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """Extract single-point features for all grid points using numpy indexing."""
+    features: dict[str, np.ndarray] = {}
+    for var in ds_slice.data_vars:
+        if var in SKIP_VARS:
+            continue
+        arr = ds_slice[var].values
+        while arr.ndim > 2:
+            arr = arr[0]
+        if arr.ndim != 2:
+            continue
+        features[var] = arr[centre_ilat, centre_ilon].astype(float)
     return features
 
 
-def compute_wind_shear(pressure_feats: dict[str, dict[str, float]]) -> dict[str, float]:
-    shear = {}
+def compute_wind_shear_vec(
+    pres_feats: dict[int, dict[str, np.ndarray]], n: int,
+) -> dict[str, np.ndarray]:
+    shear: dict[str, np.ndarray] = {}
     for low, high in [(925, 700), (925, 500)]:
-        lk, hk = str(low), str(high)
-        if lk in pressure_feats and hk in pressure_feats:
-            du = pressure_feats[hk].get("u_centre", 0) - pressure_feats[lk].get("u_centre", 0)
-            dv = pressure_feats[hk].get("v_centre", 0) - pressure_feats[lk].get("v_centre", 0)
-            shear[f"wind_shear_{low}_{high}"] = math.sqrt(du ** 2 + dv ** 2)
+        if low in pres_feats and high in pres_feats:
+            du = pres_feats[high].get("u", np.zeros(n)) - pres_feats[low].get("u", np.zeros(n))
+            dv = pres_feats[high].get("v", np.zeros(n)) - pres_feats[low].get("v", np.zeros(n))
+            shear[f"wind_shear_{low}_{high}"] = np.sqrt(du ** 2 + dv ** 2)
     return shear
 
 
-def compute_temporal_tendency(current: dict, previous: dict) -> dict[str, float]:
-    tendency_vars = ["cape_centre", "cin_centre", "t2m_centre", "sp_centre"]
-    tendencies = {}
-    for var in tendency_vars:
-        c, p = current.get(var), previous.get(var)
-        if c is not None and p is not None and np.isfinite(c) and np.isfinite(p):
-            tendencies[f"{var}_tendency"] = c - p
+def compute_tendency_vec(
+    curr: dict[str, np.ndarray], prev: dict[str, np.ndarray], n: int,
+) -> dict[str, np.ndarray]:
+    tendencies: dict[str, np.ndarray] = {}
+    for var in ["cape_centre", "t2m_centre", "sp_centre"]:
+        if var in curr and var in prev:
+            tendencies[f"{var}_tendency"] = curr[var] - prev[var]
     return tendencies
 
 
@@ -267,44 +306,52 @@ def extract_grid_features(
     target_step: int,
     base_time: datetime,
     grid: list[tuple[float, float]],
+    indices: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    pl_indices: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
 ) -> pd.DataFrame:
     valid_time = base_time + timedelta(hours=target_step)
-    rows = []
+    n = len(grid)
+    ci_lat, ci_lon, pi_lat, pi_lon = indices
+    pci_lat, pci_lon, _, _ = pl_indices
 
-    for lat, lon in grid:
-        features: dict[str, float] = {}
-        prev_feats = None
+    columns: dict[str, np.ndarray] = {}
+    prev_sfc_feats = None
 
-        for i, lead_h in enumerate(LEAD_OFFSETS_H, start=1):
-            step_h = target_step - lead_h
-            sfc_sl = step_slice(ds_sfc, step_h)
-            feats = extract_patch(sfc_sl, lat, lon)
-            features.update({f"h{i}_{k}": v for k, v in feats.items()})
+    for i, lead_h in enumerate(LEAD_OFFSETS_H, start=1):
+        step_h = target_step - lead_h
+        sfc_sl = step_slice(ds_sfc, step_h)
+        sfc_feats = extract_all_patch_features(sfc_sl, ci_lat, ci_lon, pi_lat, pi_lon)
+        for k, v in sfc_feats.items():
+            columns[f"h{i}_{k}"] = v
 
-            if prev_feats is not None:
-                tend = compute_temporal_tendency(feats, prev_feats)
-                features.update({f"h{i}_{k}": v for k, v in tend.items()})
-            prev_feats = feats
+        if prev_sfc_feats is not None:
+            for k, v in compute_tendency_vec(sfc_feats, prev_sfc_feats, n).items():
+                columns[f"h{i}_{k}"] = v
+        prev_sfc_feats = sfc_feats
 
-            pres_by_level: dict[str, dict[str, float]] = {}
-            for lev in PRESSURE_LEVELS:
-                try:
-                    pl_sl = step_slice(ds_pl.sel(isobaricInhPa=lev), step_h)
-                except (KeyError, ValueError):
-                    continue
-                pf = extract_point(pl_sl, lat, lon)
-                features.update({f"h{i}_p{lev}_{k}": v for k, v in pf.items()})
-                pres_by_level[str(lev)] = {
-                    "u_centre": pf.get("u", 0),
-                    "v_centre": pf.get("v", 0),
-                }
-            shear = compute_wind_shear(pres_by_level)
-            features.update({f"h{i}_{k}": v for k, v in shear.items()})
+        pres_by_level: dict[int, dict[str, np.ndarray]] = {}
+        for lev in PRESSURE_LEVELS:
+            try:
+                pl_sl = step_slice(ds_pl.sel(isobaricInhPa=lev), step_h)
+            except (KeyError, ValueError):
+                continue
+            pf = extract_all_point_features(pl_sl, pci_lat, pci_lon)
+            for k, v in pf.items():
+                columns[f"h{i}_p{lev}_{k}"] = v
+            pres_by_level[lev] = pf
 
-        features.update(encode_time_features(valid_time))
-        rows.append({"lat": lat, "lon": lon, "valid_time": valid_time, **features})
+        for k, v in compute_wind_shear_vec(pres_by_level, n).items():
+            columns[f"h{i}_{k}"] = v
 
-    return pd.DataFrame(rows)
+    time_feats = encode_time_features(valid_time)
+    for k, v in time_feats.items():
+        columns[k] = np.full(n, v)
+
+    df = pd.DataFrame(columns)
+    df.insert(0, "lat", [p[0] for p in grid])
+    df.insert(1, "lon", [p[1] for p in grid])
+    df.insert(2, "valid_time", valid_time)
+    return df
 
 
 def score(df: pd.DataFrame, model: lgb.Booster) -> np.ndarray:
@@ -411,11 +458,25 @@ def main() -> None:
         logger.info("Single-level vars: %s", list(ds_sfc.data_vars))
         logger.info("Pressure-level vars: %s", list(ds_pl.data_vars))
 
+        sfc_lats = ds_sfc.latitude.values
+        sfc_lons = ds_sfc.longitude.values
+        sfc_idx = precompute_grid_indices(sfc_lats, sfc_lons, grid)
+        logger.info("Precomputed single-level indices")
+
+        first_lev = PRESSURE_LEVELS[0]
+        pl_step0 = step_slice(ds_pl.sel(isobaricInhPa=first_lev), 0)
+        pl_lats = pl_step0.latitude.values
+        pl_lons = pl_step0.longitude.values
+        pl_idx = precompute_grid_indices(pl_lats, pl_lons, grid)
+        logger.info("Precomputed pressure-level indices")
+
         all_results = []
         for step in TARGET_STEPS_H:
             vt = base_time + timedelta(hours=step)
             logger.info("Scoring T+%d (%s)", step, vt.strftime("%H:%M UTC"))
-            df = extract_grid_features(ds_sfc, ds_pl, step, base_time, grid)
+            df = extract_grid_features(
+                ds_sfc, ds_pl, step, base_time, grid, sfc_idx, pl_idx,
+            )
             df["probability"] = score(df, model)
             high = (df["probability"] >= 0.5).sum()
             logger.info("  %d / %d cells >= 0.5", high, len(grid))
