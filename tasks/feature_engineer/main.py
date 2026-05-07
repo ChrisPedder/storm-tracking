@@ -36,6 +36,9 @@ GRID_RES = 0.25
 LEAD_HOURS = [1, 2, 3]
 PRESSURE_LEVELS = [500, 700, 850, 925]
 
+EVENT_SOURCE = os.environ.get("EVENT_SOURCE", "eswd")
+ESWD_EVENT_TYPES = os.environ.get("ESWD_EVENT_TYPES", "HAIL,TORNADO,WIND,LIGHTNING").split(",")
+
 s3 = boto3.client("s3")
 
 
@@ -138,6 +141,46 @@ def label_severe_storms(flashes_df: pd.DataFrame) -> pd.DataFrame:
         len(severe), SEVERE_THRESHOLD, len(counts),
     )
     return severe[["datetime", "grid_lat", "grid_lon", "label", "flash_count"]]
+
+
+def load_eswd_events() -> pd.DataFrame:
+    """Load ESWD severe weather reports from S3 CSV files."""
+    prefix = f"{RAW_PREFIX}eswd/"
+    keys = [k for k in list_s3_keys(prefix) if k.endswith(".csv")]
+
+    if not keys:
+        return pd.DataFrame()
+
+    frames = []
+    for key in keys:
+        resp = s3.get_object(Bucket=S3_BUCKET, Key=key)
+        df = pd.read_csv(io.BytesIO(resp["Body"].read()))
+        frames.append(df)
+        logger.info("Loaded %s (%d rows)", key, len(df))
+
+    raw = pd.concat(frames, ignore_index=True)
+
+    event_types = [t.strip() for t in ESWD_EVENT_TYPES]
+    raw = raw[raw["TYPE_EVENT"].isin(event_types)]
+    logger.info("Filtered to %d rows with types: %s", len(raw), ", ".join(event_types))
+
+    raw["datetime"] = pd.to_datetime(raw["TIME_EVENT"], format="ISO8601", utc=True)
+    raw = raw.dropna(subset=["LATITUDE", "LONGITUDE", "datetime"])
+
+    coords = raw.apply(
+        lambda r: snap_to_grid(r["LATITUDE"], r["LONGITUDE"]), axis=1, result_type="expand",
+    )
+    raw["grid_lat"] = coords[0]
+    raw["grid_lon"] = coords[1]
+    raw["datetime"] = raw["datetime"].dt.floor("h")
+
+    events = raw.drop_duplicates(subset=["grid_lat", "grid_lon", "datetime"])
+    events["label"] = 1
+
+    logger.info(
+        "ESWD: %d reports → %d unique cell-hours", len(raw), len(events),
+    )
+    return events[["datetime", "grid_lat", "grid_lon", "label"]].reset_index(drop=True)
 
 
 # ── ERA5 loading ──────────────────────────────────────────────
@@ -390,29 +433,54 @@ def upload_parquet(df: pd.DataFrame, key: str) -> None:
     logger.info("Uploaded %d rows to s3://%s/%s", len(df), S3_BUCKET, key)
 
 
+def load_positive_events() -> pd.DataFrame:
+    """Load positive events from the configured source(s)."""
+    source = EVENT_SOURCE.lower()
+    frames = []
+
+    if source in ("eswd", "both"):
+        eswd_df = load_eswd_events()
+        if not eswd_df.empty:
+            frames.append(eswd_df)
+        elif source == "eswd":
+            logger.error("No ESWD events found and EVENT_SOURCE=eswd")
+            sys.exit(1)
+
+    if source in ("lightning", "both"):
+        flashes_df = load_lightning_flashes()
+        if not flashes_df.empty:
+            lightning_df = label_severe_storms(flashes_df)
+            if not lightning_df.empty:
+                frames.append(lightning_df[["datetime", "grid_lat", "grid_lon", "label"]])
+        if not frames and source == "lightning":
+            logger.error("No lightning events found and EVENT_SOURCE=lightning")
+            sys.exit(1)
+
+    if not frames:
+        logger.error("No positive events from any source")
+        sys.exit(1)
+
+    positives = pd.concat(frames, ignore_index=True)
+    positives = positives.drop_duplicates(subset=["grid_lat", "grid_lon", "datetime"])
+    logger.info("Total positive events: %d (source=%s)", len(positives), source)
+    return positives
+
+
 def main() -> None:
     logger.info("Feature engineer starting")
     logger.info("  S3 bucket: %s", S3_BUCKET)
     logger.info("  Raw prefix: %s", RAW_PREFIX)
     logger.info("  Output prefix: %s", OUTPUT_PREFIX)
-    logger.info("  Severe threshold: %d strokes", SEVERE_THRESHOLD)
+    logger.info("  Event source: %s", EVENT_SOURCE)
 
-    strokes_df = load_lightning_flashes()
-    if strokes_df.empty:
-        logger.error("No lightning flashes found - cannot proceed")
-        sys.exit(1)
-
-    severe_df = label_severe_storms(strokes_df)
-    if severe_df.empty:
-        logger.error("No severe storm cell-hours found - cannot proceed")
-        sys.exit(1)
+    positives = load_positive_events()
 
     logger.info("Generating negative samples")
-    negatives_df = generate_negatives(severe_df)
+    negatives_df = generate_negatives(positives)
     logger.info("Generated %d negative samples", len(negatives_df))
 
     all_samples = pd.concat([
-        severe_df[["datetime", "grid_lat", "grid_lon", "label"]],
+        positives[["datetime", "grid_lat", "grid_lon", "label"]],
         negatives_df,
     ], ignore_index=True)
     all_samples["year"] = all_samples["datetime"].dt.year

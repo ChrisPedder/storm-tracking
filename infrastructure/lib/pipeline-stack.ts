@@ -282,6 +282,7 @@ export class StormTrackingPipelineStack extends cdk.Stack {
         S3_BUCKET: this.bucket.bucketName,
         RAW_PREFIX: 'raw/',
         OUTPUT_PREFIX: 'processed/',
+        EVENT_SOURCE: 'eswd',
       }, {
         ephemeralStorageGiB: 50,
       }),
