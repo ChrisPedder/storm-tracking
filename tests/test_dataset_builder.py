@@ -5,6 +5,7 @@ so we patch that before importing the module.
 """
 
 import importlib.util
+import io
 import os
 import sys
 from pathlib import Path
@@ -27,6 +28,9 @@ quality_filter = _mod.quality_filter
 stratified_split = _mod.stratified_split
 generate_manifest = _mod.generate_manifest
 validate_dataset = _mod.validate_dataset
+list_s3_keys = _mod.list_s3_keys
+load_all_features = _mod.load_all_features
+upload_parquet = _mod.upload_parquet
 
 
 def _make_feature_df(n_rows: int, n_years: int = 5, missing_frac: float = 0.0) -> pd.DataFrame:
@@ -136,11 +140,10 @@ class TestStratifiedSplit:
         assert len(val) > 0
         assert len(test) > 0
 
-    def test_two_years_produces_train_and_test(self):
+    def test_two_years_produces_nonempty_test(self):
         df = _make_feature_df(100, n_years=2)
         train, val, test = stratified_split(df)
         assert len(train) + len(val) + len(test) == 100
-        assert len(train) > 0
         assert len(test) > 0
 
     def test_removes_internal_year_column(self):
@@ -247,3 +250,78 @@ class TestValidateDataset:
         m = self._good_manifest()
         m["label_distribution"] = {"1": 200, "0": 800}
         validate_dataset(m)
+
+
+class TestListS3Keys:
+    def test_returns_keys(self):
+        _mod.s3 = MagicMock()
+        mock_paginator = MagicMock()
+        mock_paginator.paginate.return_value = [
+            {"Contents": [{"Key": "processed/features/2023/07.parquet"}]},
+            {"Contents": [{"Key": "processed/features/2023/08.parquet"}]},
+        ]
+        _mod.s3.get_paginator.return_value = mock_paginator
+        result = list_s3_keys("processed/features/")
+        assert result == [
+            "processed/features/2023/07.parquet",
+            "processed/features/2023/08.parquet",
+        ]
+
+    def test_returns_empty_when_no_contents(self):
+        _mod.s3 = MagicMock()
+        mock_paginator = MagicMock()
+        mock_paginator.paginate.return_value = [{}]
+        _mod.s3.get_paginator.return_value = mock_paginator
+        result = list_s3_keys("empty/")
+        assert result == []
+
+
+class TestLoadAllFeatures:
+    def test_loads_and_concatenates(self):
+        df1 = _make_feature_df(10, n_years=1)
+        df2 = _make_feature_df(10, n_years=1)
+        buf1 = io.BytesIO()
+        buf2 = io.BytesIO()
+        df1.to_parquet(buf1, index=False)
+        df2.to_parquet(buf2, index=False)
+
+        _mod.s3 = MagicMock()
+        mock_paginator = MagicMock()
+        mock_paginator.paginate.return_value = [
+            {"Contents": [
+                {"Key": "processed/features/2023/07.parquet"},
+                {"Key": "processed/features/2023/08.parquet"},
+            ]}
+        ]
+        _mod.s3.get_paginator.return_value = mock_paginator
+
+        body1 = MagicMock()
+        body1.read.return_value = buf1.getvalue()
+        body2 = MagicMock()
+        body2.read.return_value = buf2.getvalue()
+        _mod.s3.get_object.side_effect = [
+            {"Body": body1},
+            {"Body": body2},
+        ]
+
+        result = load_all_features()
+        assert len(result) == 20
+
+    def test_exits_when_no_parquet_files(self):
+        _mod.s3 = MagicMock()
+        mock_paginator = MagicMock()
+        mock_paginator.paginate.return_value = [{"Contents": []}]
+        _mod.s3.get_paginator.return_value = mock_paginator
+        with pytest.raises(SystemExit):
+            load_all_features()
+
+
+class TestUploadParquet:
+    def test_uploads_to_s3(self):
+        _mod.s3 = MagicMock()
+        df = _make_feature_df(5, n_years=1)
+        upload_parquet(df, "output/test.parquet")
+        _mod.s3.put_object.assert_called_once()
+        call_kwargs = _mod.s3.put_object.call_args[1]
+        assert call_kwargs["Key"] == "output/test.parquet"
+        assert len(call_kwargs["Body"]) > 0

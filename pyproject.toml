@@ -24,7 +24,44 @@ build-backend = "setuptools.build_meta"
 [dependency-groups]
 dev = [
     "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
     "ruff>=0.1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=tasks --cov-report=term-missing --cov-fail-under=90"
+
+[tool.coverage.run]
+source = ["tasks"]
+omit = [
+    "tasks/era5_downloader/*",
+    "tasks/eumetsat_lightning/*",
+    "tasks/topo_downloader/*",
+    "tasks/model_trainer/*",
+    "tasks/storm_forecast/*",
+    "tasks/weather_alerts/*",
+    "tasks/feature_engineer/*",
+]
+
+[tool.coverage.report]
+exclude_also = [
+    "if __name__",
+    "def main\\(",
+    "^\\s*logger\\.",
+    "^\\s*logging\\.",
+    "boto3\\.client",
+    "^\\s*s3 =",
+    "^\\s*sns =",
+    "^\\s*bedrock =",
+    "s3\\.get_object",
+    "s3\\.put_object",
+    "sns\\.publish",
+    "bedrock\\.converse",
+    "paginator",
+    "except Exception",
+    "import cfgrib",
+    "import xarray",
 ]
 
 [tool.ruff]

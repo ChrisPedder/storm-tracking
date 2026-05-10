@@ -15,8 +15,12 @@ import pandas as pd
 import pytest
 
 
-# Stub out boto3 and patch env before importing the module
+# Stub out boto3, cfgrib, and native libs before importing the module
 sys.modules.setdefault("boto3", MagicMock())
+sys.modules.setdefault("cfgrib", MagicMock())
+sys.modules.setdefault("eccodes", MagicMock())
+sys.modules.setdefault("gribapi", MagicMock())
+sys.modules.setdefault("xarray", MagicMock())
 os.environ.setdefault("S3_BUCKET", "test-bucket")
 
 _fe_path = Path(__file__).resolve().parent.parent / "tasks" / "feature_engineer" / "main.py"
