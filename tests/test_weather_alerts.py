@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 
 sys.modules.setdefault("boto3", MagicMock())
 sys.modules.setdefault("requests", MagicMock())

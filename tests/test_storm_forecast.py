@@ -1,7 +1,6 @@
 """Tests for storm_forecast pure functions."""
 
 import importlib.util
-import math
 import os
 import sys
 from datetime import datetime

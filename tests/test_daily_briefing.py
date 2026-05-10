@@ -6,9 +6,8 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
 
 sys.modules.setdefault("boto3", MagicMock())
 os.environ.setdefault("S3_BUCKET", "test-bucket")
