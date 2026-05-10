@@ -4,7 +4,6 @@ Aggregates convective risk data from Open-Meteo, Visual Crossing,
 Tomorrow.io, and OpenWeatherMap into a unified daily risk assessment.
 """
 
-import io
 import json
 import logging
 import os
@@ -174,8 +173,8 @@ def query_visual_crossing() -> dict:
             "hours_above_60": sum(1 for r in severe_risks if r >= 60),
         })
 
-    valid_locs = [l for l in locations if "peak_severerisk" in l]
-    max_risk = max(l["peak_severerisk"] for l in valid_locs) if valid_locs else 0
+    valid_locs = [loc for loc in locations if "peak_severerisk" in loc]
+    max_risk = max(loc["peak_severerisk"] for loc in valid_locs) if valid_locs else 0
 
     risk_level = "low"
     if max_risk >= 70:
@@ -256,8 +255,8 @@ def query_tomorrow_io() -> dict:
             "hours_above_60pct": sum(1 for t in thunder_probs if t["probability"] >= 60),
         })
 
-    valid_locs = [l for l in locations if "peak_thunderstorm_prob_pct" in l]
-    max_prob = max(l["peak_thunderstorm_prob_pct"] for l in valid_locs) if valid_locs else 0
+    valid_locs = [loc for loc in locations if "peak_thunderstorm_prob_pct" in loc]
+    max_prob = max(loc["peak_thunderstorm_prob_pct"] for loc in valid_locs) if valid_locs else 0
 
     risk_level = "low"
     if max_prob >= 70:
@@ -352,7 +351,7 @@ def query_openweathermap() -> dict:
         })
 
     has_alerts = len(all_alerts) > 0
-    max_thunder_hours = max((l.get("thunderstorm_hours", 0) for l in locations), default=0)
+    max_thunder_hours = max((loc.get("thunderstorm_hours", 0) for loc in locations), default=0)
 
     risk_level = "low"
     if has_alerts:

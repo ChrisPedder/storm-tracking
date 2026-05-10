@@ -115,7 +115,6 @@ def extract_all_patch_features(
     patch_ilat: np.ndarray, patch_ilon: np.ndarray,
 ) -> dict[str, np.ndarray]:
     """Extract centre + spatial stats for all grid points at once using numpy indexing."""
-    n = len(centre_ilat)
     features: dict[str, np.ndarray] = {}
 
     for var in ds_slice.data_vars:
