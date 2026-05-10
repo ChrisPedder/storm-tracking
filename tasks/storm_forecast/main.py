@@ -354,12 +354,31 @@ def extract_grid_features(
     return df
 
 
-def score(df: pd.DataFrame, model: lgb.Booster) -> np.ndarray:
+TOP_N_CONTRIBUTORS = 5
+
+
+def score(df: pd.DataFrame, model: lgb.Booster) -> tuple[np.ndarray, list[list[dict]]]:
+    """Score all rows and return (probabilities, per-row top feature contributors)."""
     model_features = model.feature_name()
     for col in model_features:
         if col not in df.columns:
             df[col] = np.nan
-    return model.predict(df[model_features])
+    data = df[model_features]
+    probs = model.predict(data)
+    contribs = model.predict(data, pred_contrib=True)
+    # contribs shape: (n_samples, n_features + 1), last col is bias
+    feature_contribs = contribs[:, :-1]
+
+    top_contributors = []
+    for i in range(len(df)):
+        row_contribs = feature_contribs[i]
+        top_idx = np.argsort(np.abs(row_contribs))[::-1][:TOP_N_CONTRIBUTORS]
+        top_contributors.append([
+            {"feature": model_features[j], "contribution": round(float(row_contribs[j]), 4)}
+            for j in top_idx
+        ])
+
+    return probs, top_contributors
 
 
 # ── Output ────────────────────────────────────────────────────
@@ -368,16 +387,19 @@ def build_geojson(results: pd.DataFrame) -> dict:
     peak = results.loc[results.groupby(["lat", "lon"])["probability"].idxmax()]
     features = []
     for _, row in peak.iterrows():
+        props = {
+            "probability": round(row["probability"], 4),
+            "peak_time": row["valid_time"].isoformat(),
+        }
+        if "top_contributors" in row and row["top_contributors"]:
+            props["top_contributors"] = row["top_contributors"]
         features.append({
             "type": "Feature",
             "geometry": {
                 "type": "Point",
                 "coordinates": [round(row["lon"], 4), round(row["lat"], 4)],
             },
-            "properties": {
-                "probability": round(row["probability"], 4),
-                "peak_time": row["valid_time"].isoformat(),
-            },
+            "properties": props,
         })
     return {"type": "FeatureCollection", "features": features}
 
@@ -386,8 +408,11 @@ def upload_results(results: pd.DataFrame, base_time: datetime, model: lgb.Booste
     date_str = base_time.strftime("%Y%m%d_%Hz")
 
     parquet_key = f"{OUTPUT_PREFIX}{date_str}/probabilities.parquet"
+    parquet_df = results.copy()
+    if "top_contributors" in parquet_df.columns:
+        parquet_df["top_contributors"] = parquet_df["top_contributors"].apply(json.dumps)
     buf = io.BytesIO()
-    results.to_parquet(buf, index=False, engine="pyarrow")
+    parquet_df.to_parquet(buf, index=False, engine="pyarrow")
     buf.seek(0)
     s3.put_object(Bucket=S3_BUCKET, Key=parquet_key, Body=buf.getvalue())
     logger.info("Uploaded %s", parquet_key)
@@ -401,7 +426,20 @@ def upload_results(results: pd.DataFrame, base_time: datetime, model: lgb.Booste
     )
     logger.info("Uploaded %s", geojson_key)
 
-    max_by_cell = results.groupby(["lat", "lon"])["probability"].max()
+    peak_rows = results.loc[results.groupby(["lat", "lon"])["probability"].idxmax()]
+    max_by_cell = peak_rows.set_index(["lat", "lon"])["probability"]
+    high_risk = []
+    for _, row in peak_rows[peak_rows["probability"] >= 0.3].iterrows():
+        cell = {
+            "lat": row["lat"],
+            "lon": row["lon"],
+            "probability": round(float(row["probability"]), 4),
+        }
+        if "top_contributors" in row and row["top_contributors"]:
+            cell["top_contributors"] = row["top_contributors"]
+        high_risk.append(cell)
+    high_risk.sort(key=lambda c: -c["probability"])
+
     summary = {
         "base_time": base_time.isoformat(),
         "valid_times": [
@@ -412,13 +450,7 @@ def upload_results(results: pd.DataFrame, base_time: datetime, model: lgb.Booste
         "max_probability": round(float(max_by_cell.max()), 4),
         "cells_above_50pct": int((max_by_cell >= 0.5).sum()),
         "cells_above_30pct": int((max_by_cell >= 0.3).sum()),
-        "high_risk_cells": sorted(
-            [
-                {"lat": lat, "lon": lon, "probability": round(float(p), 4)}
-                for (lat, lon), p in max_by_cell.items() if p >= 0.3
-            ],
-            key=lambda c: -c["probability"],
-        ),
+        "high_risk_cells": high_risk,
     }
     summary_key = f"{OUTPUT_PREFIX}{date_str}/summary.json"
     s3.put_object(
@@ -477,10 +509,12 @@ def main() -> None:
             df = extract_grid_features(
                 ds_sfc, ds_pl, step, base_time, grid, sfc_idx, pl_idx,
             )
-            df["probability"] = score(df, model)
+            probs, contributors = score(df, model)
+            df["probability"] = probs
+            df["top_contributors"] = contributors
             high = (df["probability"] >= 0.5).sum()
             logger.info("  %d / %d cells >= 0.5", high, len(grid))
-            all_results.append(df[["lat", "lon", "valid_time", "probability"]])
+            all_results.append(df[["lat", "lon", "valid_time", "probability", "top_contributors"]])
 
         ds_sfc.close()
         ds_pl.close()
