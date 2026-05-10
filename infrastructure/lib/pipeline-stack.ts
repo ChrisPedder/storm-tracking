@@ -62,6 +62,7 @@ export class StormTrackingPipelineStack extends cdk.Stack {
   private taskSg: ec2.SecurityGroup;
   private cdsSecret: secretsmanager.Secret;
   private eumetsatSecret: secretsmanager.Secret;
+  private weatherApiKeys: secretsmanager.Secret;
   private logGroup: logs.LogGroup;
   private taskRole: iam.Role;
   private readonly useDockerAssets: boolean;
@@ -130,6 +131,11 @@ export class StormTrackingPipelineStack extends cdk.Stack {
     this.eumetsatSecret = new secretsmanager.Secret(this, 'EumetsatApiKey', {
       secretName: 'storm-tracking/eumetsat-api-key',
       description: 'EUMETSAT Data Store credentials - JSON with keys: consumer_key, consumer_secret',
+    });
+
+    this.weatherApiKeys = new secretsmanager.Secret(this, 'WeatherApiKeys', {
+      secretName: 'storm-tracking/weather-api-keys',
+      description: 'Weather API keys - JSON with keys: visual_crossing, tomorrow_io, openweathermap',
     });
   }
 
@@ -308,6 +314,17 @@ export class StormTrackingPipelineStack extends cdk.Stack {
         BBOX_WEST: SWITZERLAND_BBOX.west,
         BBOX_EAST: SWITZERLAND_BBOX.east,
       }),
+
+      alerts: this.makeTask('Alerts', 'weather_alerts', 256, 512, {
+        S3_BUCKET: this.bucket.bucketName,
+        OUTPUT_PREFIX: 'alerts/',
+      }, {
+        secrets: {
+          VISUAL_CROSSING_KEY: ecs.Secret.fromSecretsManager(this.weatherApiKeys, 'visual_crossing'),
+          TOMORROW_IO_KEY: ecs.Secret.fromSecretsManager(this.weatherApiKeys, 'tomorrow_io'),
+          OPENWEATHERMAP_KEY: ecs.Secret.fromSecretsManager(this.weatherApiKeys, 'openweathermap'),
+        },
+      }),
     };
   }
 
@@ -359,10 +376,19 @@ export class StormTrackingPipelineStack extends cdk.Stack {
     const forecastStep = this.makeStep('RunForecast', tasks.forecast, {
       timeoutHours: 1,
     });
+    const alertsStep = this.makeStep('RunAlerts', tasks.alerts, {
+      timeoutHours: 1,
+    });
+
+    const parallel = new sfn.Parallel(this, 'ForecastAndAlerts', {
+      resultPath: sfn.JsonPath.DISCARD,
+    });
+    parallel.branch(forecastStep);
+    parallel.branch(alertsStep);
 
     this.forecastStateMachine = new sfn.StateMachine(this, 'ForecastPipeline', {
       stateMachineName: 'storm-tracking-forecast',
-      definitionBody: sfn.DefinitionBody.fromChainable(forecastStep),
+      definitionBody: sfn.DefinitionBody.fromChainable(parallel),
       timeout: cdk.Duration.hours(2),
     });
 
