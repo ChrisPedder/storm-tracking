@@ -88,6 +88,12 @@ describe('StormTrackingPipelineStack', () => {
         Name: 'storm-tracking/weather-api-keys',
       });
     });
+
+    test('creates a Secrets Manager secret for the Anthropic API key', () => {
+      template.hasResourceProperties('AWS::SecretsManager::Secret', {
+        Name: 'storm-tracking/anthropic-api-key',
+      });
+    });
   });
 
   describe('logging', () => {
@@ -104,8 +110,8 @@ describe('StormTrackingPipelineStack', () => {
       template.resourceCountIs('AWS::ECS::Cluster', 1);
     });
 
-    test('creates eight Fargate task definitions', () => {
-      template.resourceCountIs('AWS::ECS::TaskDefinition', 8);
+    test('creates nine Fargate task definitions', () => {
+      template.resourceCountIs('AWS::ECS::TaskDefinition', 9);
     });
 
     test('ERA5 task has 1024 CPU and 4096 MiB memory', () => {
@@ -164,6 +170,14 @@ describe('StormTrackingPipelineStack', () => {
     test('alerts task has 256 CPU and 512 MiB memory', () => {
       template.hasResourceProperties('AWS::ECS::TaskDefinition', {
         Family: 'storm-tracking-weather-alerts',
+        Cpu: '256',
+        Memory: '512',
+      });
+    });
+
+    test('briefing task has 256 CPU and 512 MiB memory', () => {
+      template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+        Family: 'storm-tracking-daily-briefing',
         Cpu: '256',
         Memory: '512',
       });

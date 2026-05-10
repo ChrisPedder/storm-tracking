@@ -63,6 +63,7 @@ export class StormTrackingPipelineStack extends cdk.Stack {
   private cdsSecret: secretsmanager.Secret;
   private eumetsatSecret: secretsmanager.Secret;
   private weatherApiKeys: secretsmanager.Secret;
+  private anthropicApiKey: secretsmanager.Secret;
   private logGroup: logs.LogGroup;
   private taskRole: iam.Role;
   private readonly useDockerAssets: boolean;
@@ -137,6 +138,11 @@ export class StormTrackingPipelineStack extends cdk.Stack {
       secretName: 'storm-tracking/weather-api-keys',
       description: 'Weather API keys - JSON with keys: visual_crossing, tomorrow_io, openweathermap',
     });
+
+    this.anthropicApiKey = new secretsmanager.Secret(this, 'AnthropicApiKey', {
+      secretName: 'storm-tracking/anthropic-api-key',
+      description: 'Anthropic API key for Claude Haiku briefing generation',
+    });
   }
 
   // ── Logging ─────────────────────────────────────────────────
@@ -162,6 +168,10 @@ export class StormTrackingPipelineStack extends cdk.Stack {
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
     });
     this.bucket.grantReadWrite(this.taskRole);
+    this.taskRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['sns:Publish'],
+      resources: ['*'],
+    }));
   }
 
   // ── Helpers ─────────────────────────────────────────────────
@@ -325,6 +335,17 @@ export class StormTrackingPipelineStack extends cdk.Stack {
           OPENWEATHERMAP_KEY: ecs.Secret.fromSecretsManager(this.weatherApiKeys, 'openweathermap'),
         },
       }),
+
+      briefing: this.makeTask('Briefing', 'daily_briefing', 256, 512, {
+        S3_BUCKET: this.bucket.bucketName,
+        FORECAST_PREFIX: 'forecast/',
+        ALERTS_PREFIX: 'alerts/',
+        PHONE_NUMBER: this.node.tryGetContext('phoneNumber') ?? '',
+      }, {
+        secrets: {
+          ANTHROPIC_API_KEY: ecs.Secret.fromSecretsManager(this.anthropicApiKey),
+        },
+      }),
     };
   }
 
@@ -379,6 +400,9 @@ export class StormTrackingPipelineStack extends cdk.Stack {
     const alertsStep = this.makeStep('RunAlerts', tasks.alerts, {
       timeoutHours: 1,
     });
+    const briefingStep = this.makeStep('RunBriefing', tasks.briefing, {
+      timeoutHours: 1,
+    });
 
     const parallel = new sfn.Parallel(this, 'ForecastAndAlerts', {
       resultPath: sfn.JsonPath.DISCARD,
@@ -386,9 +410,11 @@ export class StormTrackingPipelineStack extends cdk.Stack {
     parallel.branch(forecastStep);
     parallel.branch(alertsStep);
 
+    const chain = parallel.next(briefingStep);
+
     this.forecastStateMachine = new sfn.StateMachine(this, 'ForecastPipeline', {
       stateMachineName: 'storm-tracking-forecast',
-      definitionBody: sfn.DefinitionBody.fromChainable(parallel),
+      definitionBody: sfn.DefinitionBody.fromChainable(chain),
       timeout: cdk.Duration.hours(2),
     });
 
