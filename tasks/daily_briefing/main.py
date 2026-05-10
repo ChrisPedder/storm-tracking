@@ -8,7 +8,7 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import boto3
 
@@ -126,26 +126,114 @@ def format_explanations(forecast: dict) -> str:
     return "\n".join(lines)
 
 
+def is_within_24h(time_str: str, now: datetime) -> bool:
+    """Check if a time string falls within the next 24 hours."""
+    if not time_str:
+        return False
+    try:
+        t = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        return now <= t <= now + timedelta(hours=24)
+    except (ValueError, TypeError):
+        return False
+
+
+def build_source_agreement(forecast: dict | None, alerts: dict | None) -> str:
+    """Build a per-location summary showing which sources flag risk."""
+    now = datetime.now(timezone.utc)
+    location_signals: dict[str, list[str]] = {}
+
+    if forecast:
+        for cell in forecast.get("high_risk_cells", []):
+            label = f"lat {cell['lat']}, lon {cell['lon']}"
+            prob = cell.get("probability", 0)
+            if prob >= 0.2:
+                signal = f"Our model ({prob:.0%} storm probability)"
+                location_signals.setdefault(label, []).append(signal)
+
+    if alerts:
+        for source_data in alerts.get("sources", []):
+            source_name = source_data.get("source", "unknown")
+            for loc in source_data.get("locations", []):
+                if "error" in loc:
+                    continue
+                name = loc.get("name", "?")
+                flagged = False
+                peak_time = None
+
+                if source_name == "open_meteo":
+                    cape = loc.get("peak_cape_jkg", 0) or 0
+                    peak_time = loc.get("peak_cape_time")
+                    if cape >= 500 and is_within_24h(peak_time, now):
+                        signal = f"Open-Meteo (CAPE {int(cape)} J/kg at {peak_time})"
+                        flagged = True
+
+                elif source_name == "visual_crossing":
+                    risk = loc.get("severerisk_max", 0) or 0
+                    peak_time = loc.get("severerisk_peak_time")
+                    if risk >= 30 and is_within_24h(peak_time, now):
+                        signal = f"Visual Crossing (severe risk {int(risk)}/100 at {peak_time})"
+                        flagged = True
+
+                elif source_name == "tomorrow_io":
+                    prob = loc.get("peak_thunderstorm_prob_pct", 0) or 0
+                    peak_time = loc.get("peak_time")
+                    if prob >= 30 and is_within_24h(peak_time, now):
+                        signal = f"Tomorrow.io ({int(prob)}% thunderstorm at {peak_time})"
+                        flagged = True
+
+                elif source_name == "openweathermap":
+                    if loc.get("has_thunderstorm"):
+                        signal = "OpenWeatherMap (thunderstorm conditions)"
+                        flagged = True
+
+                if flagged:
+                    location_signals.setdefault(name, []).append(signal)
+
+    if not location_signals:
+        return ""
+
+    lines = []
+    for location, signals in sorted(location_signals.items(), key=lambda x: -len(x[1])):
+        agreement = f"{len(signals)}/{len(signals)} sources" if len(signals) > 1 else "1 source"
+        lines.append(f"  {location} ({agreement}): {'; '.join(signals)}")
+
+    return "\n".join(lines)
+
+
 def build_prompt(forecast: dict | None, alerts: dict | None) -> str:
     """Build the LLM prompt with all available data."""
+    now = datetime.now(timezone.utc)
     parts = []
     parts.append(
         "You are a concise weather briefing assistant for a cyclist in Switzerland. "
-        "Summarize the severe weather risk for today and tomorrow. "
-        "Be specific about WHERE (regions/cities) and WHEN (time windows) thunderstorms are likely. "
-        "Include a brief mention of WHY the risk is elevated (the physical drivers). "
-        "Give a clear recommendation: safe to ride, avoid certain times/areas, or stay home. "
-        "Keep it under 400 characters for SMS. Use plain language, no jargon."
+        "Summarize the severe weather risk for the NEXT 24 HOURS ONLY "
+        f"(from {now.strftime('%H:%M UTC %d %b')} to {(now + timedelta(hours=24)).strftime('%H:%M UTC %d %b')}). "
+        "For each at-risk location, state: the city, the time window, "
+        "and NAME the specific sources that agree (e.g. 'Our model + Open-Meteo + Tomorrow.io agree'). "
+        "Briefly mention WHY (physical drivers). "
+        "End with a clear ride/don't-ride recommendation. "
+        "Keep under 500 characters. Use plain language, no jargon."
     )
 
+    source_agreement = build_source_agreement(forecast, alerts)
+    if source_agreement:
+        parts.append(f"\n\nSOURCE AGREEMENT (locations where multiple sources flag risk, next 24h):\n{source_agreement}")
+
     if forecast:
-        parts.append(f"\n\nMODEL FORECAST (our trained severe storm model):\n{json.dumps(forecast, indent=2)}")
         explanations = format_explanations(forecast)
         if explanations:
-            parts.append(f"\n\nMODEL EXPLANATION (what is driving storm risk):\n{explanations}")
+            parts.append(f"\n\nMODEL EXPLANATION (physical drivers of elevated risk):\n{explanations}")
+        parts.append(f"\n\nFORECAST SUMMARY: max_probability={forecast.get('max_probability', 0):.1%}, "
+                     f"cells_above_30pct={forecast.get('cells_above_30pct', 0)}, "
+                     f"cells_above_50pct={forecast.get('cells_above_50pct', 0)}")
 
     if alerts:
-        parts.append(f"\n\nEXTERNAL WEATHER APIS:\n{json.dumps(alerts, indent=2)}")
+        overall = alerts.get("overall", {})
+        parts.append(f"\n\nOVERALL EXTERNAL RISK: {overall.get('overall_risk', '?')} "
+                     f"(confidence: {overall.get('confidence', '?')}, "
+                     f"sources: {overall.get('sources_ok', 0)}/{overall.get('sources_queried', 0)})")
 
     if not forecast and not alerts:
         parts.append("\n\nNo forecast or alert data available. Give a generic advisory.")
@@ -158,7 +246,7 @@ def generate_summary(prompt: str) -> str:
     response = bedrock.converse(
         modelId=BEDROCK_MODEL_ID,
         messages=[{"role": "user", "content": [{"text": prompt}]}],
-        inferenceConfig={"maxTokens": 200, "temperature": 0.3},
+        inferenceConfig={"maxTokens": 300, "temperature": 0.3},
     )
     return response["output"]["message"]["content"][0]["text"]
 
