@@ -12,24 +12,25 @@
 
     <style>
         .reveal {
-            font-size: 32px;
+            font-size: 28px;
         }
 
         .reveal h1 {
-            font-size: 2.2em;
+            font-size: 2em;
             color: #2c3e50;
-            margin-bottom: 0.5em;
+            margin-bottom: 0.3em;
         }
 
         .reveal h2 {
-            font-size: 1.6em;
+            font-size: 1.5em;
             color: #34495e;
-            margin-bottom: 0.8em;
+            margin-bottom: 0.5em;
         }
 
         .reveal h3 {
-            font-size: 1.3em;
+            font-size: 1.15em;
             color: #546e7a;
+            margin-bottom: 0.3em;
         }
 
         .reveal pre {
@@ -39,11 +40,16 @@
         }
 
         .reveal ul, .reveal ol {
-            margin: 0.5em 0;
+            margin: 0.3em 0;
         }
 
         .reveal li {
-            margin: 0.4em 0;
+            margin: 0.2em 0;
+            line-height: 1.4;
+        }
+
+        .reveal p {
+            margin: 0.3em 0;
         }
 
         .reveal .emphasis {
@@ -58,7 +64,7 @@
 
         .reveal .columns {
             display: flex;
-            gap: 2em;
+            gap: 1.5em;
         }
 
         .reveal .column {
@@ -91,19 +97,28 @@
         }
 
         .reveal .mermaid svg {
-            max-height: 450px;
+            max-height: 400px;
             max-width: 100%;
         }
 
         .reveal table {
-            font-size: 0.8em;
+            font-size: 0.75em;
+        }
+
+        .reveal table th, .reveal table td {
+            padding: 0.3em 0.6em;
         }
 
         .reveal blockquote {
+            font-size: 0.85em;
             font-style: italic;
             border-left: 4px solid #3498db;
             padding-left: 1em;
             background: rgba(52, 152, 219, 0.05);
+        }
+
+        .reveal .slide-content {
+            font-size: 0.9em;
         }
     </style>
 </head>
@@ -140,6 +155,17 @@
             }
         });
 
+        // Convert markdown code blocks to mermaid divs after Reveal renders
+        function convertMermaidBlocks() {
+            document.querySelectorAll('code.language-mermaid, code.mermaid').forEach(function(code) {
+                var pre = code.parentElement;
+                var div = document.createElement('div');
+                div.className = 'mermaid';
+                div.textContent = code.textContent;
+                pre.parentElement.replaceChild(div, pre);
+            });
+        }
+
         Reveal.initialize({
             hash: true,
             center: true,
@@ -153,13 +179,8 @@
                 RevealNotes,
                 RevealZoom
             ]
-        });
-
-        Reveal.on('ready', function() {
-            mermaid.run({ querySelector: '.mermaid' });
-        });
-
-        Reveal.on('slidechanged', function() {
+        }).then(function() {
+            convertMermaidBlocks();
             mermaid.run({ querySelector: '.mermaid' });
         });
     </script>

@@ -8,7 +8,7 @@
 
 *Daily SMS briefings for cycling safety*
 
-<span class="small" style="color: rgba(255,255,255,0.7);">Built with AWS, LightGBM, and multi-source weather intelligence</span>
+<span class="small" style="color: rgba(255,255,255,0.7);">AWS CDK | LightGBM | Multi-source weather intelligence</span>
 
 ---
 
@@ -17,45 +17,22 @@
 <div class="columns">
 <div class="column">
 
-### Switzerland's Weather
+**Switzerland's convective storms** develop rapidly in summer — complex terrain amplifies and funnels them unpredictably.
 
-- Rapid convective storm development in summer
-- Complex terrain funnels and amplifies storms
-- 30-minute warning window is often too late
+A cyclist planning tomorrow's ride needs a clear yes/no signal, not five apps showing conflicting data.
 
 </div>
 <div class="column">
 
-### The Cyclist's Dilemma
+**What we want:**
 
-- Plan rides 12-24h in advance <!-- .element: class="fragment" -->
-- Need <span class="key-term">actionable</span> risk assessment, not raw data <!-- .element: class="fragment" -->
-- Existing forecasts are regional, not personal <!-- .element: class="fragment" -->
+- Single daily SMS at 07:00
+- Plain language: ride or don't ride
+- Backed by multiple data sources
+- Explains *why* (physical drivers)
 
 </div>
 </div>
-
-<br>
-
-> "Should I ride tomorrow afternoon?" needs a better answer than checking 5 weather apps.
-<!-- .element: class="fragment" -->
-
----
-
-## Product Vision
-
-A fully automated pipeline that:
-
-1. **Ingests** atmospheric data from ERA5 reanalysis and live weather APIs
-2. **Predicts** thunderstorm probability at 0.25 grid resolution, 3h lead time <!-- .element: class="fragment" -->
-3. **Aggregates** risk signals from multiple independent sources <!-- .element: class="fragment" -->
-4. **Explains** why the model predicts storms (physical drivers) <!-- .element: class="fragment" -->
-5. **Delivers** a plain-language SMS briefing every morning at 07:00 <!-- .element: class="fragment" -->
-
-<br>
-
-<span class="emphasis">No apps to check. No interpretation needed. Just ride or don't ride.</span>
-<!-- .element: class="fragment" -->
 
 ---
 
@@ -63,43 +40,19 @@ A fully automated pipeline that:
 
 ```mermaid
 graph TB
-    subgraph Data Sources
-        ERA5[ERA5 Reanalysis]
-        ESWD[ESWD Storm Reports]
-        LTG[EUMETSAT Lightning]
+    subgraph Training Pipeline
+        ERA5[ERA5 Reanalysis] --> S3[(S3)]
+        ESWD[ESWD Reports] --> S3
+        S3 --> FE[Feature Engineer]
+        FE --> DB[Dataset Builder]
+        DB --> MT[Model Trainer]
     end
-
-    subgraph AWS Pipeline
-        S3[(S3 Data Lake)]
-        FE[Feature Engineer]
-        DB[Dataset Builder]
-        MT[Model Trainer]
+    subgraph Daily Inference
+        ECMWF[ECMWF Open Data] --> SF[Storm Forecast]
+        SF --> BR[Daily Briefing]
+        WA[Weather Alerts] --> BR
+        BR -->|SMS| P[Phone]
     end
-
-    subgraph Live Inference
-        ECMWF[ECMWF Open Data]
-        SF[Storm Forecast]
-        WA[Weather Alerts]
-        BR[Daily Briefing]
-    end
-
-    subgraph External APIs
-        OM[Open-Meteo]
-        TIO[Tomorrow.io]
-        VC[Visual Crossing]
-    end
-
-    ERA5 --> S3
-    ESWD --> S3
-    LTG --> S3
-    S3 --> FE --> DB --> MT
-    ECMWF --> SF
-    OM --> WA
-    TIO --> WA
-    VC --> WA
-    SF --> BR
-    WA --> BR
-    BR -->|SMS| Phone[fa:fa-phone]
 ```
 
 ---
@@ -109,69 +62,91 @@ graph TB
 <div class="columns">
 <div class="column">
 
-### Training Data
+**Training sources:**
 
-| Source | Purpose |
-|--------|---------|
-| ERA5 | Atmospheric state (CAPE, shear, BLH) |
-| ESWD | Verified storm reports (ground truth) |
-| Lightning | Flash density clustering |
+- **ERA5** — atmospheric reanalysis (CAPE, shear, BLH, temperature, moisture)
+- **ESWD** — verified storm reports (ground truth labels)
+- **EUMETSAT** — lightning flash density
 
 </div>
 <div class="column">
 
-### Feature Engineering
+**Feature engineering:**
 
-- **3x3 spatial patches** at each grid point
-- **3 lead-time windows** (1h, 2h, 3h before)
-- **Wind shear** between pressure levels
-- **Temporal tendencies** (CAPE change rate)
-- **Cyclical encoding** (time of day, season)
+- 3x3 spatial patches (0.25 grid)
+- 3 lead-time windows (1h, 2h, 3h)
+- Wind shear between pressure levels
+- Temporal tendencies (rate of change)
+- Cyclical time encoding
 
-~50 features per sample
+**~50 features per sample**
 
 </div>
 </div>
-
-<br>
-
-Dataset: stratified year-based split, quality-filtered, validated before training.
 
 ---
 
-## ML Model
+## LightGBM Model
 
 <div class="columns">
 <div class="column">
 
-### LightGBM Classifier
+**Why LightGBM:**
 
-- Binary: storm / no-storm per grid cell
-- 3:1 negative sampling ratio
-- `pred_contrib=True` for SHAP explanations
-
-### Explainability
-
-Top physical drivers surfaced in briefings:
-
-- "High instability energy (CAPE)"
-- "Strong wind shear 925-700 hPa"
-- "Low boundary layer height"
+- Fast training on tabular atmospheric data
+- Handles missing values natively
+- Built-in feature importance
+- `pred_contrib=True` gives per-sample SHAP values without a separate library
 
 </div>
 <div class="column">
 
-### Grid Coverage
+**Setup:**
 
-- Switzerland: 45.5N-48.25N, 5.5E-11E
-- 0.25 resolution (~300 grid points)
-- 6 forecast steps (9h-24h lead time)
+- Binary classification: storm vs no-storm
+- Per grid cell (0.25, ~300 points over CH)
+- 3:1 negative sampling with temporal/spatial separation
+- Year-stratified train/val/test split
 
-### Output
+</div>
+</div>
 
-- Per-cell storm probability
-- High-risk cells with explanations
-- Summary statistics
+---
+
+## SHAP Explainability
+
+LightGBM's `pred_contrib` returns the additive contribution of each feature to the log-odds prediction — equivalent to TreeSHAP values.
+
+<div class="columns">
+<div class="column">
+
+**In the pipeline:**
+
+```python
+contribs = model.predict(
+    row, pred_contrib=True
+)
+# contribs[:-1] = per-feature SHAP
+# contribs[-1]  = base value (bias)
+top = sorted(
+    zip(features, contribs),
+    key=lambda x: abs(x[1]),
+    reverse=True
+)[:3]
+```
+
+</div>
+<div class="column">
+
+**In the briefing:**
+
+Raw features are mapped to plain language:
+
+- `h1_cape_centre +0.8` → "high instability energy"
+- `h2_wind_shear_925_700 +0.5` → "strong wind shear"
+- `h1_blh_min -0.3` → "low boundary layer height"
+
+SMS: *"Driven by high CAPE and strong low-level shear"*
 
 </div>
 </div>
@@ -182,20 +157,20 @@ Top physical drivers surfaced in briefings:
 
 ```mermaid
 graph LR
-    OM[Open-Meteo<br/>CAPE forecasts] --> AGG[Risk<br/>Aggregator]
-    TIO[Tomorrow.io<br/>Thunderstorm %] --> AGG
-    VC[Visual Crossing<br/>Severe risk index] --> AGG
-    OWM[OpenWeatherMap<br/>Alert conditions] --> AGG
-    AGG --> RISK[Overall Risk Level]
-    AGG --> CONF[Confidence Score]
-    AGG --> SRC[Source Agreement]
+    OM[Open-Meteo] --> AGG[Aggregator]
+    TIO[Tomorrow.io] --> AGG
+    VC[Visual Crossing] --> AGG
+    OWM[OpenWeatherMap] --> AGG
+    AGG --> OUT[Risk + Confidence + Agreement]
 ```
 
-<br>
+<div class="slide-content">
 
-- **Consensus logic**: single high-risk source downgraded to moderate; multiple sources confirming = high confidence
-- **24h window filter**: only surfaces threats in the next 24 hours
-- **Per-location signals**: "Lugano (3/3 sources): Our model + Open-Meteo + Tomorrow.io agree"
+- **Consensus logic**: single high-risk source → downgrade to moderate; multiple sources confirming → high confidence
+- **24h window**: only surfaces threats in the actionable window
+- **Source agreement**: *"Lugano (3/3 sources): model + Open-Meteo + Tomorrow.io agree"*
+
+</div>
 
 ---
 
@@ -204,82 +179,72 @@ graph LR
 <div class="columns">
 <div class="column">
 
-### Pipeline
+**Pipeline:**
 
-1. Load latest forecast from S3
-2. Load latest risk assessment
-3. Build source agreement summary
-4. Format physical explanations
-5. Generate natural language via **Amazon Nova Micro** (Bedrock)
-6. Send SMS via **AWS SNS**
+1. Load forecast + alerts from S3
+2. Build source agreement summary
+3. Format SHAP explanations
+4. Generate text via **Amazon Nova Micro** (Bedrock)
+5. Send SMS via **AWS SNS**
+
+Runs at **07:00 CEST** via EventBridge.
 
 </div>
 <div class="column">
 
-### Example Output
+**Example output:**
 
-> "Moderate storm risk for Lugano/Ticino this afternoon (14:00-18:00). Our model (45%), Open-Meteo (CAPE 1200 J/kg), and Tomorrow.io (55%) agree. Driven by high instability and strong low-level shear. Safe to ride this morning; avoid afternoon south of Alps."
-
-Delivered at **07:00 CEST** daily.
+> Moderate storm risk Lugano/Ticino 14:00-18:00. Model (45%), Open-Meteo (CAPE 1200 J/kg), Tomorrow.io (55%) agree. High instability + strong low-level shear. Safe to ride this morning; avoid afternoon south of Alps.
 
 </div>
 </div>
 
 ---
 
-## Infrastructure
+## Infrastructure & CI/CD
 
 <div class="columns">
 <div class="column">
 
-### AWS CDK (TypeScript)
+**AWS CDK (TypeScript):**
 
-- **ECS Fargate** tasks for each pipeline step
-- **EventBridge** cron scheduling
-- **S3** data lake with lifecycle policies
-- **CloudWatch** alarms on task failures
-- **SNS** for SMS delivery
-- **Bedrock** for LLM inference
+- ECS Fargate tasks per pipeline step
+- EventBridge cron scheduling
+- S3 data lake
+- CloudWatch alarms
+- SNS SMS delivery
+- Bedrock LLM inference
 
 </div>
 <div class="column">
 
-### CI/CD
+**CI/CD (GitHub Actions):**
 
-- **GitHub Actions** for test + deploy
-- **pytest** with 90%+ coverage gate
-- **ruff** linting
-- **CDK diff/deploy** on push to main
+- pytest with 90%+ coverage gate
+- ruff linting
+- CDK build + deploy on push to main
 - Fully automated, zero manual steps
 
-```
-push → test → lint → CDK deploy
-```
-
-</div>
-</div>
-
-<br>
-
 ![CI/CD](https://github.com/ChrisPedder/storm-tracking/actions/workflows/ci.yml/badge.svg)
+
+</div>
+</div>
 
 ---
 
 ## Next Steps
 
-| Priority | Item | Status |
-|----------|------|--------|
-| 1 | Live ECMWF open data ingestion | Planned |
-| 2 | Model training pipeline (automated retraining) | Planned |
-| 3 | Backtesting framework (hindcast verification) | Planned |
-| 4 | Multi-user support (different locations/thresholds) | Future |
-| 5 | Web dashboard with interactive risk maps | Future |
-| 6 | Push notifications via mobile app | Future |
+<div class="slide-content">
 
-<br>
+| Priority | Item |
+|----------|------|
+| 1 | Live ECMWF open data ingestion |
+| 2 | Automated model retraining pipeline |
+| 3 | Backtesting framework (hindcast verification) |
+| 4 | Probability calibration (reliability diagrams) |
+| 5 | Multi-user support (locations / thresholds) |
+| 6 | Web dashboard with interactive risk maps |
 
-### Key Improvements
+**Key technical improvements:** ensemble models for uncertainty quantification, radar-based nowcasting (0-3h), and a feedback loop where observed storms retrain the model.
 
-- **Calibration**: probability reliability diagram against observed storms
-- **Ensemble**: combine multiple ML models for uncertainty quantification
-- **Nowcasting**: extend to 0-3h lead time using radar extrapolation
+</div>
