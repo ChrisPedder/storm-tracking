@@ -89,11 +89,6 @@ describe('StormTrackingPipelineStack', () => {
       });
     });
 
-    test('creates a Secrets Manager secret for the Anthropic API key', () => {
-      template.hasResourceProperties('AWS::SecretsManager::Secret', {
-        Name: 'storm-tracking/anthropic-api-key',
-      });
-    });
   });
 
   describe('logging', () => {

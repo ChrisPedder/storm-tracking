@@ -63,7 +63,6 @@ export class StormTrackingPipelineStack extends cdk.Stack {
   private cdsSecret: secretsmanager.Secret;
   private eumetsatSecret: secretsmanager.Secret;
   private weatherApiKeys: secretsmanager.Secret;
-  private anthropicApiKey: secretsmanager.Secret;
   private logGroup: logs.LogGroup;
   private taskRole: iam.Role;
   private readonly useDockerAssets: boolean;
@@ -139,10 +138,6 @@ export class StormTrackingPipelineStack extends cdk.Stack {
       description: 'Weather API keys - JSON with keys: visual_crossing, tomorrow_io, openweathermap',
     });
 
-    this.anthropicApiKey = new secretsmanager.Secret(this, 'AnthropicApiKey', {
-      secretName: 'storm-tracking/anthropic-api-key',
-      description: 'Anthropic API key for Claude Haiku briefing generation',
-    });
   }
 
   // ── Logging ─────────────────────────────────────────────────
@@ -170,6 +165,10 @@ export class StormTrackingPipelineStack extends cdk.Stack {
     this.bucket.grantReadWrite(this.taskRole);
     this.taskRole.addToPolicy(new iam.PolicyStatement({
       actions: ['sns:Publish'],
+      resources: ['*'],
+    }));
+    this.taskRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['bedrock:InvokeModel'],
       resources: ['*'],
     }));
   }
@@ -341,10 +340,6 @@ export class StormTrackingPipelineStack extends cdk.Stack {
         FORECAST_PREFIX: 'forecast/',
         ALERTS_PREFIX: 'alerts/',
         PHONE_NUMBER: this.node.tryGetContext('phoneNumber') ?? '',
-      }, {
-        secrets: {
-          ANTHROPIC_API_KEY: ecs.Secret.fromSecretsManager(this.anthropicApiKey),
-        },
       }),
     };
   }

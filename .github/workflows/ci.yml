@@ -82,4 +82,4 @@ jobs:
         run: npm ci
 
       - name: CDK deploy
-        run: npx cdk deploy StormTrackingPipeline --require-approval never
+        run: npx cdk deploy StormTrackingPipeline --require-approval never -c phoneNumber=${{ vars.PHONE_NUMBER }}

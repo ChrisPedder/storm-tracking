@@ -1,7 +1,7 @@
 """Generate a daily severe weather briefing and send via SMS.
 
 Reads model forecast and multi-source weather alerts from S3,
-summarizes with Claude Haiku for cycling safety, sends via AWS SNS.
+summarizes with Amazon Nova Micro (Bedrock) for cycling safety, sends via AWS SNS.
 """
 
 import json
@@ -10,7 +10,6 @@ import os
 import sys
 from datetime import datetime, timezone
 
-import anthropic
 import boto3
 
 logging.basicConfig(
@@ -24,11 +23,12 @@ S3_BUCKET = os.environ["S3_BUCKET"]
 FORECAST_PREFIX = os.environ.get("FORECAST_PREFIX", "forecast/")
 ALERTS_PREFIX = os.environ.get("ALERTS_PREFIX", "alerts/")
 PHONE_NUMBER = os.environ.get("PHONE_NUMBER", "")
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "amazon.nova-micro-v1:0")
 
 s3 = boto3.client("s3")
 sns = boto3.client("sns")
+bedrock = boto3.client("bedrock-runtime")
 
 
 def load_json_from_s3(key: str) -> dict | None:
@@ -94,18 +94,13 @@ def build_prompt(forecast: dict | None, alerts: dict | None) -> str:
 
 
 def generate_summary(prompt: str) -> str:
-    """Call Claude Haiku to generate the SMS summary."""
-    if not ANTHROPIC_API_KEY:
-        logger.error("No ANTHROPIC_API_KEY set")
-        return "Weather briefing unavailable - no API key configured."
-
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=200,
-        messages=[{"role": "user", "content": prompt}],
+    """Call Amazon Nova Micro via Bedrock to generate the SMS summary."""
+    response = bedrock.converse(
+        modelId=BEDROCK_MODEL_ID,
+        messages=[{"role": "user", "content": [{"text": prompt}]}],
+        inferenceConfig={"maxTokens": 200, "temperature": 0.3},
     )
-    return message.content[0].text
+    return response["output"]["message"]["content"][0]["text"]
 
 
 def send_sms(message: str) -> None:
