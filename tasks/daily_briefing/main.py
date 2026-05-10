@@ -24,7 +24,7 @@ FORECAST_PREFIX = os.environ.get("FORECAST_PREFIX", "forecast/")
 ALERTS_PREFIX = os.environ.get("ALERTS_PREFIX", "alerts/")
 PHONE_NUMBER = os.environ.get("PHONE_NUMBER", "")
 SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
-BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "amazon.nova-micro-v1:0")
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "eu.amazon.nova-micro-v1:0")
 
 s3 = boto3.client("s3")
 sns = boto3.client("sns")
