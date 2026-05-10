@@ -1,0 +1,39 @@
+name: Deploy Presentation to Cloudflare Pages
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - 'presentation/**'
+      - '.github/workflows/deploy-presentation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create Pages project if needed
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages project create storm-tracking-presentation --production-branch=main
+        continue-on-error: true
+
+      - name: Deploy to Cloudflare Pages
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy presentation --project-name=storm-tracking-presentation --commit-dirty=true
+
+      - name: Print deployment URL
+        run: |
+          echo "Production: https://storm-tracking-presentation.pages.dev"
+          echo "Preview: ${{ steps.deploy.outputs.deployment-url }}"
