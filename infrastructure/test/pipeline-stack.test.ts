@@ -239,11 +239,11 @@ describe('StormTrackingPipelineStack', () => {
       });
     });
 
-    test('creates an EventBridge rule for twice-daily forecast', () => {
+    test('creates an EventBridge rule for daily forecast at 05:00 UTC', () => {
       template.hasResourceProperties('AWS::Events::Rule', {
         Name: 'storm-tracking-forecast',
-        ScheduleExpression: 'cron(0 7,19 * * ? *)',
-        State: 'DISABLED',
+        ScheduleExpression: 'cron(0 5 * * ? *)',
+        State: 'ENABLED',
       });
     });
   });

@@ -70,6 +70,62 @@ def find_latest_alerts() -> dict | None:
     return load_json_from_s3(latest_key)
 
 
+FEATURE_DESCRIPTIONS = {
+    "cape": "instability energy (CAPE)",
+    "cin": "convective inhibition",
+    "blh": "boundary layer height",
+    "u10": "east-west wind at 10m",
+    "v10": "north-south wind at 10m",
+    "t2m": "surface temperature",
+    "d2m": "dewpoint",
+    "sp": "surface pressure",
+    "tp": "precipitation",
+    "tcc": "cloud cover",
+    "tcwv": "atmospheric moisture",
+    "wind_shear": "wind shear",
+    "doy_sin": "seasonal cycle",
+    "doy_cos": "seasonal cycle",
+    "hour_sin": "time of day",
+    "hour_cos": "time of day",
+}
+
+
+def describe_feature(feature_name: str) -> str:
+    """Convert model feature names to human-readable descriptions."""
+    lower = feature_name.lower()
+    for key, desc in FEATURE_DESCRIPTIONS.items():
+        if key in lower:
+            return desc
+    return feature_name
+
+
+def format_explanations(forecast: dict) -> str:
+    """Format SHAP-based feature explanations into readable text."""
+    high_risk = forecast.get("high_risk_cells", [])
+    if not high_risk:
+        return ""
+
+    lines = []
+    for cell in high_risk[:3]:
+        contributors = cell.get("top_contributors", [])
+        if not contributors:
+            continue
+        drivers = []
+        seen = set()
+        for c in contributors:
+            desc = describe_feature(c["feature"])
+            if desc not in seen:
+                sign = "high" if c["contribution"] > 0 else "low"
+                drivers.append(f"{sign} {desc}")
+                seen.add(desc)
+            if len(drivers) >= 3:
+                break
+        if drivers:
+            lines.append(f"  Risk drivers: {', '.join(drivers)}")
+
+    return "\n".join(lines)
+
+
 def build_prompt(forecast: dict | None, alerts: dict | None) -> str:
     """Build the LLM prompt with all available data."""
     parts = []
@@ -77,12 +133,16 @@ def build_prompt(forecast: dict | None, alerts: dict | None) -> str:
         "You are a concise weather briefing assistant for a cyclist in Switzerland. "
         "Summarize the severe weather risk for today and tomorrow. "
         "Be specific about WHERE (regions/cities) and WHEN (time windows) thunderstorms are likely. "
+        "Include a brief mention of WHY the risk is elevated (the physical drivers). "
         "Give a clear recommendation: safe to ride, avoid certain times/areas, or stay home. "
-        "Keep it under 300 characters for SMS. Use plain language, no jargon."
+        "Keep it under 400 characters for SMS. Use plain language, no jargon."
     )
 
     if forecast:
         parts.append(f"\n\nMODEL FORECAST (our trained severe storm model):\n{json.dumps(forecast, indent=2)}")
+        explanations = format_explanations(forecast)
+        if explanations:
+            parts.append(f"\n\nMODEL EXPLANATION (what is driving storm risk):\n{explanations}")
 
     if alerts:
         parts.append(f"\n\nEXTERNAL WEATHER APIS:\n{json.dumps(alerts, indent=2)}")
@@ -154,7 +214,7 @@ def main() -> None:
         logger.warning("No alerts data found")
 
     prompt = build_prompt(forecast, alerts)
-    logger.info("Generating summary with Claude Haiku...")
+    logger.info("Generating summary with Bedrock (%s)...", BEDROCK_MODEL_ID)
     summary = generate_summary(prompt)
     logger.info("Summary: %s", summary)
 

@@ -415,8 +415,8 @@ export class StormTrackingPipelineStack extends cdk.Stack {
 
     const rule = new events.Rule(this, 'ForecastTrigger', {
       ruleName: 'storm-tracking-forecast',
-      schedule: events.Schedule.cron({ hour: '7,19', minute: '0' }),
-      enabled: false,
+      schedule: events.Schedule.cron({ hour: '5', minute: '0' }),
+      enabled: true,
     });
     rule.addTarget(new events_targets.SfnStateMachine(this.forecastStateMachine));
   }
