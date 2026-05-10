@@ -51,7 +51,13 @@ jobs:
         run: uv sync --dev
 
       - name: Run tests
-        run: uv run pytest tests/ -v
+        run: uv run pytest tests/ -v --cov-report=json:coverage.json
+
+      - name: Coverage badge
+        if: github.ref == 'refs/heads/main'
+        run: |
+          COVERAGE=$(python -c "import json; print(int(json.load(open('coverage.json'))['totals']['percent_covered_display']))")
+          echo "### Test Coverage: ${COVERAGE}%" >> $GITHUB_STEP_SUMMARY
 
       - name: Lint
         run: uv run ruff check src/ tests/ tasks/
