@@ -388,8 +388,8 @@ class TestBuildSourceAgreementExtraBranches:
                     "name": "Bern",
                     "lat": 46.95,
                     "lon": 7.45,
-                    "severerisk_max": 60,
-                    "severerisk_peak_time": future,
+                    "peak_severerisk": 60,
+                    "peak_time": future,
                 }],
             }]
         }
@@ -406,7 +406,7 @@ class TestBuildSourceAgreementExtraBranches:
                     "name": "Geneva",
                     "lat": 46.2,
                     "lon": 6.15,
-                    "has_thunderstorm": True,
+                    "thunderstorm_hours": 3,
                 }],
             }]
         }

@@ -65,6 +65,7 @@ export class StormTrackingPipelineStack extends cdk.Stack {
   private weatherApiKeys: secretsmanager.Secret;
   private logGroup: logs.LogGroup;
   private taskRole: iam.Role;
+  private briefingTopic: sns.Topic;
   private readonly useDockerAssets: boolean;
 
   constructor(scope: Construct, id: string, props?: StormTrackingPipelineStackProps) {
@@ -77,6 +78,7 @@ export class StormTrackingPipelineStack extends cdk.Stack {
     this.createLogging();
     this.createCluster();
     this.createTaskRole();
+    this.createBriefingTopic();
     const tasks = this.createTaskDefinitions();
     this.createStateMachine(tasks);
     this.createForecastStateMachine(tasks);
@@ -171,6 +173,21 @@ export class StormTrackingPipelineStack extends cdk.Stack {
       actions: ['bedrock:InvokeModel'],
       resources: ['*'],
     }));
+  }
+
+  // ── Briefing Topic ──────────────────────────────────────────
+
+  private createBriefingTopic(): void {
+    this.briefingTopic = new sns.Topic(this, 'BriefingTopic', {
+      topicName: 'storm-tracking-briefing',
+    });
+
+    const alertEmail = this.node.tryGetContext('alertEmail');
+    if (alertEmail) {
+      this.briefingTopic.addSubscription(
+        new sns_subscriptions.EmailSubscription(alertEmail),
+      );
+    }
   }
 
   // ── Helpers ─────────────────────────────────────────────────
@@ -340,6 +357,7 @@ export class StormTrackingPipelineStack extends cdk.Stack {
         FORECAST_PREFIX: 'forecast/',
         ALERTS_PREFIX: 'alerts/',
         PHONE_NUMBER: this.node.tryGetContext('phoneNumber') ?? '',
+        SNS_TOPIC_ARN: this.briefingTopic.topicArn,
       }),
     };
   }
@@ -462,6 +480,19 @@ export class StormTrackingPipelineStack extends cdk.Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
     failureAlarm.addAlarmAction(new cloudwatch_actions.SnsAction(topic));
+
+    const forecastFailureMetric = this.forecastStateMachine.metricFailed({
+      period: cdk.Duration.hours(1),
+    });
+    const forecastFailureAlarm = new cloudwatch.Alarm(this, 'ForecastFailureAlarm', {
+      alarmName: 'storm-tracking-forecast-failure',
+      metric: forecastFailureMetric,
+      threshold: 1,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+    forecastFailureAlarm.addAlarmAction(new cloudwatch_actions.SnsAction(topic));
 
     const costAlarm = new cloudwatch.Alarm(this, 'CostAlarm', {
       alarmName: 'storm-tracking-cost',

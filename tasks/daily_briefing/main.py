@@ -170,8 +170,8 @@ def build_source_agreement(forecast: dict | None, alerts: dict | None) -> str:
                         flagged = True
 
                 elif source_name == "visual_crossing":
-                    risk = loc.get("severerisk_max", 0) or 0
-                    peak_time = loc.get("severerisk_peak_time")
+                    risk = loc.get("peak_severerisk", 0) or 0
+                    peak_time = loc.get("peak_time")
                     if risk >= 30 and is_within_24h(peak_time, now):
                         signal = f"Visual Crossing (severe risk {int(risk)}/100 at {peak_time})"
                         flagged = True
@@ -184,7 +184,7 @@ def build_source_agreement(forecast: dict | None, alerts: dict | None) -> str:
                         flagged = True
 
                 elif source_name == "openweathermap":
-                    if loc.get("has_thunderstorm"):
+                    if loc.get("thunderstorm_hours", 0) > 0:
                         signal = "OpenWeatherMap (thunderstorm conditions)"
                         flagged = True
 
@@ -214,7 +214,7 @@ def build_prompt(forecast: dict | None, alerts: dict | None) -> str:
         "and NAME the specific sources that agree (e.g. 'Our model + Open-Meteo + Tomorrow.io agree'). "
         "Briefly mention WHY (physical drivers). "
         "End with a clear ride/don't-ride recommendation. "
-        "Keep under 500 characters. Use plain language, no jargon."
+        "Keep under 300 characters. Use plain language, no jargon."
     )
 
     source_agreement = build_source_agreement(forecast, alerts)
@@ -252,27 +252,39 @@ def generate_summary(prompt: str) -> str:
 
 
 def send_sms(message: str) -> None:
-    """Send SMS via SNS."""
+    """Send briefing via SMS and SNS topic (email backup)."""
+    sent = False
+
     if PHONE_NUMBER:
-        resp = sns.publish(
-            PhoneNumber=PHONE_NUMBER,
-            Message=message,
-            MessageAttributes={
-                "AWS.SNS.SMS.SMSType": {
-                    "DataType": "String",
-                    "StringValue": "Transactional",
+        try:
+            resp = sns.publish(
+                PhoneNumber=PHONE_NUMBER,
+                Message=message,
+                MessageAttributes={
+                    "AWS.SNS.SMS.SMSType": {
+                        "DataType": "String",
+                        "StringValue": "Transactional",
+                    },
                 },
-            },
-        )
-        logger.info("SMS sent to %s (MessageId: %s)", PHONE_NUMBER, resp["MessageId"])
-    elif SNS_TOPIC_ARN:
-        resp = sns.publish(
-            TopicArn=SNS_TOPIC_ARN,
-            Message=message,
-            Subject="Storm Briefing",
-        )
-        logger.info("Published to SNS topic (MessageId: %s)", resp["MessageId"])
-    else:
+            )
+            logger.info("SMS sent to %s (MessageId: %s)", PHONE_NUMBER, resp["MessageId"])
+            sent = True
+        except Exception as exc:
+            logger.warning("SMS send failed: %s", exc)
+
+    if SNS_TOPIC_ARN:
+        try:
+            resp = sns.publish(
+                TopicArn=SNS_TOPIC_ARN,
+                Message=message,
+                Subject="Storm Briefing",
+            )
+            logger.info("Published to SNS topic (MessageId: %s)", resp["MessageId"])
+            sent = True
+        except Exception as exc:
+            logger.warning("SNS topic publish failed: %s", exc)
+
+    if not sent:
         logger.warning("No PHONE_NUMBER or SNS_TOPIC_ARN set - printing summary only")
         print(f"\n{'='*50}\nDAILY BRIEFING:\n{message}\n{'='*50}")
 
