@@ -35,7 +35,7 @@ export interface StormTrackingPipelineStackProps extends cdk.StackProps {
   readonly useDockerAssets?: boolean;
 
   /**
-   * Email address for pipeline failure and cost alerts.
+   * Comma-separated email addresses for pipeline failure and cost alerts.
    * @default - no notifications
    */
   readonly alertEmail?: string;
@@ -184,9 +184,12 @@ export class StormTrackingPipelineStack extends cdk.Stack {
 
     const alertEmail = this.node.tryGetContext('alertEmail');
     if (alertEmail) {
-      this.briefingTopic.addSubscription(
-        new sns_subscriptions.EmailSubscription(alertEmail),
-      );
+      const emails = alertEmail.split(',').map((e: string) => e.trim());
+      for (const email of emails) {
+        this.briefingTopic.addSubscription(
+          new sns_subscriptions.EmailSubscription(email),
+        );
+      }
     }
   }
 
@@ -356,7 +359,7 @@ export class StormTrackingPipelineStack extends cdk.Stack {
         S3_BUCKET: this.bucket.bucketName,
         FORECAST_PREFIX: 'forecast/',
         ALERTS_PREFIX: 'alerts/',
-        PHONE_NUMBER: this.node.tryGetContext('phoneNumber') ?? '',
+        PHONE_NUMBER: '',
         SNS_TOPIC_ARN: this.briefingTopic.topicArn,
       }),
     };
@@ -465,7 +468,10 @@ export class StormTrackingPipelineStack extends cdk.Stack {
     });
 
     if (alertEmail) {
-      topic.addSubscription(new sns_subscriptions.EmailSubscription(alertEmail));
+      const emails = alertEmail.split(',').map((e: string) => e.trim());
+      for (const email of emails) {
+        topic.addSubscription(new sns_subscriptions.EmailSubscription(email));
+      }
     }
 
     const failureMetric = this.stateMachine.metricFailed({

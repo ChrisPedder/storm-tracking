@@ -327,17 +327,19 @@ def query_openweathermap() -> dict:
                 "description": alert.get("description", "")[:200],
             })
 
-        # Check hourly for thunderstorm weather codes (2xx)
+        # Check hourly for moderate+ thunderstorm codes (exclude 200=light rain, 210=light thunderstorm)
+        MILD_CODES = {200, 210, 230}
         hourly = data.get("hourly", [])
         thunder_hours = []
         for h in hourly:
             weather = h.get("weather", [{}])
             for w in weather:
-                if 200 <= w.get("id", 0) < 300:
+                wid = w.get("id", 0)
+                if 200 <= wid < 300 and wid not in MILD_CODES:
                     thunder_hours.append({
                         "time": datetime.fromtimestamp(h["dt"], tz=timezone.utc).isoformat(),
                         "description": w.get("description", ""),
-                        "id": w["id"],
+                        "id": wid,
                     })
                     break
 

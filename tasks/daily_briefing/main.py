@@ -26,6 +26,16 @@ PHONE_NUMBER = os.environ.get("PHONE_NUMBER", "")
 SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
 BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "eu.amazon.nova-micro-v1:0")
 
+# Switzerland proper bounding box (tighter than the forecast model grid)
+CH_NORTH = 47.81
+CH_SOUTH = 45.82
+CH_WEST = 5.96
+CH_EAST = 10.49
+
+
+def is_in_switzerland(lat: float, lon: float) -> bool:
+    return CH_SOUTH <= lat <= CH_NORTH and CH_WEST <= lon <= CH_EAST
+
 s3 = boto3.client("s3")
 sns = boto3.client("sns")
 bedrock = boto3.client("bedrock-runtime")
@@ -101,7 +111,10 @@ def describe_feature(feature_name: str) -> str:
 
 def format_explanations(forecast: dict) -> str:
     """Format SHAP-based feature explanations into readable text."""
-    high_risk = forecast.get("high_risk_cells", [])
+    high_risk = [
+        c for c in forecast.get("high_risk_cells", [])
+        if is_in_switzerland(c["lat"], c["lon"])
+    ]
     if not high_risk:
         return ""
 
@@ -146,6 +159,8 @@ def build_source_agreement(forecast: dict | None, alerts: dict | None) -> str:
 
     if forecast:
         for cell in forecast.get("high_risk_cells", []):
+            if not is_in_switzerland(cell["lat"], cell["lon"]):
+                continue
             label = f"lat {cell['lat']}, lon {cell['lon']}"
             prob = cell.get("probability", 0)
             if prob >= 0.2:
@@ -208,12 +223,16 @@ def build_prompt(forecast: dict | None, alerts: dict | None) -> str:
     parts = []
     parts.append(
         "You are a concise weather briefing assistant for a cyclist in Switzerland. "
-        "Summarize the severe weather risk for the NEXT 24 HOURS ONLY "
+        "Report ONLY thunderstorm, hail, or severe convective weather risk WITHIN SWITZERLAND. "
+        "Do NOT report ordinary rain, drizzle, or light showers. "
+        "Do NOT report risk for locations outside Switzerland (e.g. France, Germany, Italy, Austria). "
+        "Summarize the risk for the NEXT 24 HOURS ONLY "
         f"(from {now.strftime('%H:%M UTC %d %b')} to {(now + timedelta(hours=24)).strftime('%H:%M UTC %d %b')}). "
         "For each at-risk location, state: the city, the time window, "
         "and NAME the specific sources that agree (e.g. 'Our model + Open-Meteo + Tomorrow.io agree'). "
         "Briefly mention WHY (physical drivers). "
         "End with a clear ride/don't-ride recommendation. "
+        "If no storm risk exists, say 'No storm risk. Safe to ride.' "
         "Keep under 300 characters. Use plain language, no jargon."
     )
 
